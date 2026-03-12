@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>荷物管理</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ステータスバッジ */
+    .badge-未処理  { background:#f3f4f6; color:#374151; }
+    .badge-梱包中  { background:#fef3c7; color:#92400e; }
+    .badge-出荷済  { background:#dbeafe; color:#1e40af; }
+    .badge-納品完了{ background:#d1fae5; color:#065f46; }
+
+    /* スムーズなモーダルアニメーション */
+    #detail-panel { transition: transform 0.25s ease; transform: translateY(100%); }
+    #detail-panel.open { transform: translateY(0); }
+
+    /* タッチ最適化 */
+    .card { -webkit-tap-highlight-color: transparent; }
+    input, select, button { font-size: 16px; } /* iOS zoom防止 */
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+
+<!-- ヘッダー -->
+<header class="bg-blue-700 text-white shadow-md sticky top-0 z-30">
+  <div class="flex items-center justify-between px-4 py-3 max-w-2xl mx-auto">
+    <div>
+      <h1 class="text-lg font-bold leading-tight">荷物管理</h1>
+      <p id="last-sync" class="text-xs text-blue-200">未同期</p>
+    </div>
+    <button id="btn-sync"
+      class="bg-white text-blue-700 font-semibold text-sm px-4 py-2 rounded-full shadow active:scale-95 transition">
+      同期
+    </button>
+  </div>
+</header>
+
+<!-- フィルターバー -->
+<div class="bg-white border-b sticky top-[56px] z-20 shadow-sm">
+  <div class="px-4 py-2 max-w-2xl mx-auto flex flex-wrap gap-2 items-center">
+    <select id="f-status" class="border rounded-lg px-3 py-1.5 text-sm bg-gray-50 flex-1 min-w-[100px]">
+      <option value="">全ステータス</option>
+      <option value="未処理">未処理</option>
+      <option value="梱包中">梱包中</option>
+      <option value="出荷済">出荷済</option>
+      <option value="納品完了">納品完了</option>
+    </select>
+    <input id="f-tanto" type="text" placeholder="担当者コード"
+      class="border rounded-lg px-3 py-1.5 text-sm bg-gray-50 flex-1 min-w-[110px]">
+    <input id="f-ucod" type="number" placeholder="得意先コード"
+      class="border rounded-lg px-3 py-1.5 text-sm bg-gray-50 flex-1 min-w-[110px]">
+    <button id="btn-filter"
+      class="bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg active:bg-blue-800">
+      絞込
+    </button>
+    <button id="btn-clear"
+      class="bg-gray-100 text-gray-600 text-sm px-3 py-1.5 rounded-lg active:bg-gray-200">
+      クリア
+    </button>
+  </div>
+</div>
+
+<!-- 統計バー -->
+<div class="max-w-2xl mx-auto px-4 pt-3 pb-1">
+  <div id="stats-bar" class="flex gap-2 overflow-x-auto pb-1 scrollbar-hide text-xs">
+    <!-- JS で生成 -->
+  </div>
+</div>
+
+<!-- 荷物一覧 -->
+<main class="max-w-2xl mx-auto px-4 pb-24">
+  <div id="loading" class="hidden flex justify-center py-12">
+    <div class="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+  </div>
+  <div id="empty" class="hidden text-center text-gray-400 py-16">
+    <div class="text-5xl mb-3">📦</div>
+    <p class="text-base">表示するデータがありません</p>
+    <p class="text-sm mt-1">「同期」ボタンでデータを取得してください</p>
+  </div>
+  <div id="shipment-list" class="space-y-2 pt-1"></div>
+</main>
+
+<!-- 詳細パネル（画面下から） -->
+<div id="detail-overlay" class="fixed inset-0 bg-black/40 z-40 hidden" onclick="closeDetail()"></div>
+<div id="detail-panel"
+  class="fixed bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl z-50 max-h-[90vh] overflow-y-auto">
+  <div class="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between">
+    <h2 class="font-bold text-lg">荷物詳細</h2>
+    <button onclick="closeDetail()" class="text-gray-400 text-2xl leading-none">&times;</button>
+  </div>
+  <div id="detail-content" class="px-5 py-4 pb-8"></div>
+</div>
+
+<!-- トースト -->
+<div id="toast"
+  class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 hidden
+         bg-gray-800 text-white text-sm px-5 py-2.5 rounded-full shadow-lg">
+</div>
+
+<script>
+// ============================================================
+// 状態管理
+// ============================================================
+let allShipments = [];
+let filteredShipments = [];
+let syncing = false;
+
+const STATUS_COLOR = {
+  '未処理':  'badge-未処理',
+  '梱包中':  'badge-梱包中',
+  '出荷済':  'badge-出荷済',
+  '納品完了':'badge-納品完了',
+};
+
+// ============================================================
+// API
+// ============================================================
+const BASE = '';
+
+async function apiGet(path) {
+  const res = await fetch(BASE + path);
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+async function apiPost(path, body) {
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+async function apiPut(path, body) {
+  const res = await fetch(BASE + path, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+
+// ============================================================
+// 荷物一覧取得
+// ============================================================
+async function loadShipments(params = {}) {
+  showLoading(true);
+  try {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.tanto)  qs.set('tanto', params.tanto);
+    if (params.ucod)   qs.set('ucod', params.ucod);
+    const q = qs.toString() ? '?' + qs.toString() : '';
+    allShipments = await apiGet('/api/shipments' + q);
+    filteredShipments = allShipments;
+    renderList();
+    renderStats();
+  } catch(e) {
+    showToast('データ取得失敗: ' + e.message, 'error');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ============================================================
+// 同期
+// ============================================================
+async function syncData() {
+  if (syncing) return;
+  syncing = true;
+  const btn = document.getElementById('btn-sync');
+  btn.textContent = '同期中…';
+  btn.disabled = true;
+  try {
+    const res = await apiPost('/api/sync');
+    showToast(res.message);
+    const now = new Date().toLocaleString('ja-JP');
+    document.getElementById('last-sync').textContent = `最終同期: ${now}`;
+    await loadShipments(currentFilters());
+  } catch(e) {
+    showToast('同期失敗: ' + e.message, 'error');
+  } finally {
+    syncing = false;
+    btn.textContent = '同期';
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// フィルター
+// ============================================================
+function currentFilters() {
+  return {
+    status: document.getElementById('f-status').value,
+    tanto:  document.getElementById('f-tanto').value.trim(),
+    ucod:   document.getElementById('f-ucod').value.trim(),
+  };
+}
+
+document.getElementById('btn-filter').addEventListener('click', () => {
+  loadShipments(currentFilters());
+});
+document.getElementById('btn-clear').addEventListener('click', () => {
+  document.getElementById('f-status').value = '';
+  document.getElementById('f-tanto').value = '';
+  document.getElementById('f-ucod').value = '';
+  loadShipments();
+});
+document.getElementById('btn-sync').addEventListener('click', syncData);
+
+// ============================================================
+// 一覧レンダリング
+// ============================================================
+function renderList() {
+  const list = document.getElementById('shipment-list');
+  const empty = document.getElementById('empty');
+
+  if (!filteredShipments.length) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  list.innerHTML = filteredShipments.map(s => {
+    const badge = STATUS_COLOR[s.status] || 'badge-未処理';
+    const nodayu = s.nodayu_str || '-';
+    const isOverdue = isDateOverdue(s.nodayu_str, today);
+    const overdueClass = isOverdue && s.status === '未処理' ? 'border-l-4 border-l-red-400' : '';
+
+    return `
+    <div class="card bg-white rounded-xl shadow-sm border ${overdueClass} active:bg-gray-50 cursor-pointer"
+         onclick="openDetail(${s.denno})">
+      <div class="px-4 py-3">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-mono text-xs text-gray-400">#${s.denno}</span>
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium ${badge}">${s.status}</span>
+              ${isOverdue && s.status === '未処理' ? '<span class="text-xs text-red-500 font-medium">納期超過</span>' : ''}
+            </div>
+            <p class="font-semibold text-gray-900 mt-1 truncate">${s.hname || '-'}</p>
+            <p class="text-xs text-gray-500 truncate">${s.hnm2 || ''}</p>
+          </div>
+          <div class="text-right shrink-0">
+            <p class="text-sm font-bold text-gray-800">${s.suryo != null ? s.suryo + ' 個' : '-'}</p>
+            <p class="text-xs text-gray-400 mt-0.5">納期</p>
+            <p class="text-xs font-medium ${isOverdue ? 'text-red-500' : 'text-gray-600'}">${nodayu}</p>
+          </div>
+        </div>
+        <div class="mt-2 flex gap-3 text-xs text-gray-500">
+          <span class="truncate">📦 ${s.synm1 || '-'}</span>
+          ${s.tanto ? `<span>担当: ${s.tanto}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function isDateOverdue(dateStr, today) {
+  if (!dateStr || dateStr === '-') return false;
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) return false;
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+  return d < today;
+}
+
+// ============================================================
+// 統計バー
+// ============================================================
+function renderStats() {
+  const counts = { '未処理': 0, '梱包中': 0, '出荷済': 0 };
+  allShipments.forEach(s => {
+    if (counts[s.status] !== undefined) counts[s.status]++;
+  });
+  const total = allShipments.length;
+  const bar = document.getElementById('stats-bar');
+  const items = [
+    { label: '合計', val: total, cls: 'bg-gray-100 text-gray-700' },
+    { label: '未処理', val: counts['未処理'], cls: 'bg-gray-100 text-gray-700' },
+    { label: '梱包中', val: counts['梱包中'], cls: 'bg-amber-100 text-amber-700' },
+    { label: '出荷済', val: counts['出荷済'], cls: 'bg-blue-100 text-blue-700' },
+  ];
+  bar.innerHTML = items.map(i =>
+    `<div class="flex-shrink-0 flex items-center gap-1.5 ${i.cls} px-3 py-1 rounded-full">
+       <span>${i.label}</span>
+       <span class="font-bold">${i.val}</span>
+     </div>`
+  ).join('');
+}
+
+// ============================================================
+// 詳細パネル
+// ============================================================
+async function openDetail(denno) {
+  try {
+    const s = await apiGet(`/api/shipments/${denno}`);
+    renderDetail(s);
+    document.getElementById('detail-overlay').classList.remove('hidden');
+    requestAnimationFrame(() => {
+      document.getElementById('detail-panel').classList.add('open');
+    });
+  } catch(e) {
+    showToast('詳細取得失敗: ' + e.message, 'error');
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detail-panel').classList.remove('open');
+  document.getElementById('detail-overlay').classList.add('hidden');
+}
+
+function renderDetail(s) {
+  const badge = STATUS_COLOR[s.status] || 'badge-未処理';
+  const canSetPacking = s.status === '未処理';
+  const canUnsetPacking = s.status === '梱包中';
+
+  const fields = [
+    ['伝票番号', s.denno],
+    ['品名', s.hname],
+    ['型式', s.hnm2],
+    ['メーカー', s.mnmm],
+    ['仕入先品番', s.mhnm],
+    ['数量', s.suryo != null ? s.suryo + ' 個' : null],
+    ['得意先コード', s.ucod],
+    ['担当者コード', s.tanto],
+    ['出荷先', [s.synm1, s.synm2].filter(Boolean).join(' ')],
+    ['住所', [s.adr1t, s.adr2t].filter(Boolean).join(' ')],
+    ['得意先注番', s.utno1],
+    ['配送コード', s.haiso],
+    ['得意先納期', s.nodayu_str],
+    ['指定納期', s.nodays_str],
+    ['出荷日', s.sykdy_str],
+    ['備考', s.dtadd],
+    ['同期日時', s.synced_at ? s.synced_at.replace('T', ' ').substring(0,16) : null],
+  ];
+
+  const rows = fields
+    .filter(([, v]) => v !== null && v !== undefined && v !== '' && v !== 0)
+    .map(([k, v]) => `
+      <div class="flex py-2 border-b border-gray-100 last:border-0">
+        <dt class="w-28 text-xs text-gray-500 shrink-0 pt-0.5">${k}</dt>
+        <dd class="flex-1 text-sm font-medium text-gray-800">${v}</dd>
+      </div>`).join('');
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="flex items-center gap-3 mb-4">
+      <div>
+        <p class="text-xs text-gray-400 font-mono">#${s.denno}</p>
+        <h3 class="font-bold text-xl">${s.hname || '品名なし'}</h3>
+        <p class="text-sm text-gray-500">${s.hnm2 || ''}</p>
+      </div>
+      <span class="ml-auto text-sm px-3 py-1 rounded-full font-medium ${badge}">${s.status}</span>
+    </div>
+
+    <dl class="mb-5">${rows}</dl>
+
+    <!-- ステータス操作 -->
+    <div class="flex flex-col gap-2 mt-4">
+      ${canSetPacking ? `
+        <button onclick="updateStatus(${s.denno}, '梱包中')"
+          class="w-full bg-amber-500 text-white font-bold py-3 rounded-xl active:bg-amber-700 text-base">
+          梱包中 にする
+        </button>` : ''}
+      ${canUnsetPacking ? `
+        <button onclick="updateStatus(${s.denno}, '未処理')"
+          class="w-full bg-gray-200 text-gray-700 font-bold py-3 rounded-xl active:bg-gray-300 text-base">
+          梱包中を解除
+        </button>` : ''}
+      <button onclick="printLabel(${s.denno})"
+        class="w-full bg-white border-2 border-blue-600 text-blue-600 font-bold py-3 rounded-xl active:bg-blue-50 text-base">
+        荷札を印刷
+      </button>
+    </div>
+  `;
+}
+
+async function updateStatus(denno, status) {
+  try {
+    await apiPut(`/api/shipments/${denno}/status`, { status });
+    showToast(`ステータスを「${status}」に更新しました`);
+    closeDetail();
+    await loadShipments(currentFilters());
+  } catch(e) {
+    showToast('更新失敗: ' + e.message, 'error');
+  }
+}
+
+function printLabel(denno) {
+  window.open(`/api/shipments/${denno}/label`, '_blank');
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function showLoading(flag) {
+  document.getElementById('loading').classList.toggle('hidden', !flag);
+  if (flag) document.getElementById('shipment-list').innerHTML = '';
+}
+
+let toastTimer;
+function showToast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `fixed bottom-6 left-1/2 -translate-x-1/2 z-50
+    text-white text-sm px-5 py-2.5 rounded-full shadow-lg
+    ${type === 'error' ? 'bg-red-600' : 'bg-gray-800'}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+// ============================================================
+// 初期化
+// ============================================================
+loadShipments();
+</script>
+</body>
+</html>

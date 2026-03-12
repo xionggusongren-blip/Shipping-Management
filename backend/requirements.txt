@@ -1,0 +1,7 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+# IBM i JDBC接続（Java + jt400.jar が必要）
+JayDeBeApi>=1.2.3
+JPype1>=1.4.1

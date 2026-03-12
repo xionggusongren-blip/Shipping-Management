@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# 機密情報（コミット禁止）
+backend/.env
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
