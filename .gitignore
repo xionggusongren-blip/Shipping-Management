@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# 環境変数（機密情報）
+backend/.env
+
+# データベース
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ログ
+*.log
+
+# jt400 jar（別途配置）
+*.jar

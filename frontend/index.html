@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1976d2">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>荷物管理</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ログイン画面 -->
+<div id="login-screen">
+  <div class="login-card">
+    <h2>📦 荷物管理</h2>
+    <p>IBM i 連携 発送業務管理システム</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-username">ユーザー名</label>
+        <input type="text" id="login-username" autocomplete="username" placeholder="user1" required>
+      </div>
+      <div class="form-group">
+        <label for="login-password">パスワード</label>
+        <input type="password" id="login-password" autocomplete="current-password" placeholder="••••••" required>
+      </div>
+      <div id="login-error"></div>
+      <button type="submit" id="login-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:16px">
+        ログイン
+      </button>
+    </form>
+    <p style="margin-top:16px;font-size:11px;color:#999;text-align:center">
+      デモ: admin/admin123 または user1/user123
+    </p>
+  </div>
+</div>
+
+<!-- ヘッダー -->
+<header id="app-header">
+  <h1>📦 荷物管理</h1>
+  <button id="sync-btn">🔄 同期</button>
+  <div id="user-chip" class="user-chip">
+    <span id="user-name">-</span>
+  </div>
+</header>
+
+<!-- メインコンテンツ -->
+<main id="main-content">
+
+  <!-- 荷物一覧タブ -->
+  <div id="tab-list" class="tab-pane active">
+    <div class="search-bar">
+      <input type="text" id="search-keyword" placeholder="🔍 品名・出荷先で検索" inputmode="search">
+      <select id="filter-status">
+        <option value="">全ステータス</option>
+        <option value="未処理">未処理</option>
+        <option value="梱包中">梱包中</option>
+        <option value="出荷済">出荷済</option>
+        <option value="納品完了">納品完了</option>
+      </select>
+      <select id="filter-tanto">
+        <option value="">全担当</option>
+        <option value="T001">担当1 (T001)</option>
+        <option value="T002">担当2 (T002)</option>
+        <option value="T003">担当3 (T003)</option>
+      </select>
+      <button id="search-btn" class="btn btn-primary btn-sm">検索</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span id="list-count" style="font-size:12px;color:var(--text-light)">読込中...</span>
+      <span style="font-size:11px;color:var(--text-light)">タップで詳細表示</span>
+    </div>
+    <ul id="shipment-list"></ul>
+    <div id="list-empty" class="empty-state" style="display:none">
+      <div class="icon">📭</div>
+      <p>該当する荷物がありません</p>
+      <p style="margin-top:8px"><button class="btn btn-primary btn-sm" onclick="App.doSync()">同期して再試行</button></p>
+    </div>
+  </div>
+
+  <!-- スキャンタブ -->
+  <div id="tab-scan" class="tab-pane">
+    <div class="card">
+      <div class="card-header">📷 バーコード / QRスキャン</div>
+      <div class="card-body">
+        <div id="scanner-container">
+          <div id="reader"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button id="start-scan-btn" class="btn btn-primary">📷 カメラ起動</button>
+          <button id="stop-scan-btn" class="btn btn-danger" style="display:none">⏹ 停止</button>
+        </div>
+        <p style="color:var(--text-light);font-size:12px;margin-top:8px">
+          UTNO1（得意先注番）または品番をスキャンしてください
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">⌨️ 手動入力</div>
+      <div class="card-body">
+        <div class="manual-input">
+          <input type="text" id="manual-barcode" placeholder="バーコード・注番を入力" inputmode="text" autocomplete="off">
+          <button id="manual-search-btn" class="btn btn-primary">検索</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="scan-result-area"></div>
+  </div>
+
+  <!-- 管理タブ -->
+  <div id="tab-admin" class="tab-pane">
+    <div class="card">
+      <div class="card-header">📊 概況</div>
+      <div class="card-body">
+        <div class="admin-grid">
+          <div class="stat-card">
+            <div id="admin-record-count" class="number">-</div>
+            <div class="label">総件数</div>
+          </div>
+          <div class="stat-card">
+            <div id="admin-status-未処理" class="number" style="color:var(--text-light)">-</div>
+            <div class="label">未処理</div>
+          </div>
+          <div class="stat-card">
+            <div id="admin-status-梱包中" class="number" style="color:var(--warning)">-</div>
+            <div class="label">梱包中</div>
+          </div>
+          <div class="stat-card">
+            <div id="admin-status-出荷済" class="number" style="color:var(--info)">-</div>
+            <div class="label">出荷済</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text-light)">
+          最終同期: <span id="admin-last-sync">-</span>
+        </div>
+        <div style="margin-top:12px">
+          <button class="btn btn-primary btn-sm" onclick="App.doSync()">🔄 今すぐ同期</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">📋 同期ログ</div>
+      <div class="card-body" style="padding:0 16px">
+        <ul id="sync-log-list" style="list-style:none;padding:0"></ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">ℹ️ システム情報</div>
+      <div class="card-body">
+        <div style="font-size:13px;display:flex;flex-direction:column;gap:8px">
+          <div>バックエンド: <strong>Python FastAPI</strong></div>
+          <div>データベース: <strong>SQLite</strong></div>
+          <div>IBM i: <strong>192.168.3.230 / TREED.RJU1</strong></div>
+          <div>バージョン: <strong>1.0.0</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- 詳細パネル -->
+<div id="detail-panel">
+  <div class="panel-header">
+    <button class="back-btn" id="detail-back">&#8592;</button>
+    <h2 id="detail-title">詳細</h2>
+    <span id="status-badge" class="badge badge-未処理">未処理</span>
+  </div>
+  <div class="panel-body">
+
+    <!-- 荷物情報 -->
+    <div class="detail-section">
+      <div class="detail-section-title">荷物情報</div>
+      <div class="detail-grid" id="detail-info-body">
+        <!-- JS で生成 -->
+      </div>
+    </div>
+
+    <!-- ステータス更新 -->
+    <div class="detail-section">
+      <div class="detail-section-title">ステータス更新</div>
+      <div style="padding:12px">
+        <div class="status-buttons">
+          <button class="status-btn" data-status="未処理">📋 未処理</button>
+          <button class="status-btn" data-status="梱包中">📦 梱包中</button>
+          <button class="status-btn" data-status="出荷済">🚚 出荷済</button>
+          <button class="status-btn" data-status="納品完了">✅ 納品完了</button>
+        </div>
+        <textarea id="status-memo" class="memo-area" placeholder="メモ（任意）"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="save-status-btn" class="btn btn-primary">💾 ステータス更新</button>
+          <button id="print-label-btn" class="btn btn-outline">🖨️ 荷札印刷</button>
+        </div>
+        <p id="status-updated-info" style="font-size:11px;color:var(--text-light);margin-top:8px"></p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ボトムナビ -->
+<nav id="bottom-nav">
+  <button class="nav-item active" data-tab="list">
+    <span class="icon">📋</span>
+    <span>一覧</span>
+  </button>
+  <button class="nav-item" data-tab="scan">
+    <span class="icon">📷</span>
+    <span>スキャン</span>
+  </button>
+  <button class="nav-item" id="nav-admin" data-tab="admin" style="display:none">
+    <span class="icon">⚙️</span>
+    <span>管理</span>
+  </button>
+</nav>
+
+<!-- ローディング -->
+<div id="loading-overlay" class="loading-overlay" style="display:none">
+  <div class="spinner"></div>
+</div>
+
+<!-- トースト -->
+<div id="toast"></div>
+
+<!-- 外部ライブラリ: html5-qrcode (CDN) -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<!-- アプリスクリプト -->
+<script src="/js/api.js"></script>
+<script src="/js/scanner.js"></script>
+<script src="/js/app.js"></script>
+
+</body>
+</html>

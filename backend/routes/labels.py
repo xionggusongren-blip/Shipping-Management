@@ -1,0 +1,133 @@
+"""荷札PDF生成 API"""
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from io import BytesIO
+
+from database import get_db, ShipmentCache, ShipmentStatus
+from models import ibmi_date_to_str
+from auth import get_current_user, User
+
+router = APIRouter()
+
+HAISO_NAMES = {
+    "YAMTO": "ヤマト運輸",
+    "SAGAWA": "佐川急便",
+    "FUKUTU": "福山通運",
+    "NIPPON": "日本郵便",
+    "SEINO": "西濃運輸",
+}
+
+
+def _generate_label_pdf(cache: ShipmentCache, status_rec) -> bytes:
+    """荷札PDFを生成する（ReportLab使用）"""
+    try:
+        from reportlab.lib.pagesizes import A6
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    except ImportError:
+        raise RuntimeError("reportlab がインストールされていません")
+
+    buffer = BytesIO()
+    # A6サイズ（148mm x 105mm）横向き
+    page_width, page_height = 148 * mm, 105 * mm
+    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
+
+    # 日本語フォント登録
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+        font_name = "HeiseiMin-W3"
+    except Exception:
+        font_name = "Helvetica"
+
+    margin = 5 * mm
+
+    # 枠線
+    c.setLineWidth(1.5)
+    c.rect(margin, margin, page_width - 2 * margin, page_height - 2 * margin)
+
+    # タイトル行
+    c.setFont(font_name, 12)
+    c.drawString(margin + 3 * mm, page_height - margin - 10 * mm, "荷　札")
+
+    # 出荷先
+    c.setFont(font_name, 14)
+    synm1 = (cache.synm1 or "").strip()
+    synm2 = (cache.synm2 or "").strip()
+    c.drawString(margin + 3 * mm, page_height - margin - 22 * mm, synm1)
+    if synm2:
+        c.setFont(font_name, 11)
+        c.drawString(margin + 3 * mm, page_height - margin - 31 * mm, synm2)
+
+    # 住所
+    c.setFont(font_name, 9)
+    adr1 = (cache.adr1t or "").strip()
+    adr2 = (cache.adr2t or "").strip()
+    c.drawString(margin + 3 * mm, page_height - margin - 40 * mm, adr1)
+    if adr2:
+        c.drawString(margin + 3 * mm, page_height - margin - 47 * mm, adr2)
+
+    # 区切り線
+    c.setLineWidth(0.5)
+    y_sep = page_height - margin - 52 * mm
+    c.line(margin, y_sep, page_width - margin, y_sep)
+
+    # 品名・数量
+    c.setFont(font_name, 10)
+    hname = (cache.hname or "").strip()
+    hnm2 = (cache.hnm2 or "").strip()
+    c.drawString(margin + 3 * mm, y_sep - 8 * mm, f"品名: {hname}")
+    if hnm2:
+        c.drawString(margin + 3 * mm, y_sep - 15 * mm, f"型式: {hnm2}")
+    c.drawString(margin + 3 * mm, y_sep - 22 * mm, f"数量: {cache.suryo or 0}")
+
+    # 伝票番号・納期・配送
+    c.setFont(font_name, 9)
+    nodayu_str = ibmi_date_to_str(cache.nodayu) or "-"
+    haiso_name = HAISO_NAMES.get((cache.haiso or "").strip(), (cache.haiso or "").strip())
+    c.drawString(margin + 3 * mm, y_sep - 32 * mm, f"伝票番号: {cache.denno}")
+    c.drawString(margin + 60 * mm, y_sep - 32 * mm, f"納期: {nodayu_str}")
+    c.drawString(margin + 3 * mm, y_sep - 39 * mm, f"配送: {haiso_name}")
+
+    # 備考
+    dtadd = (cache.dtadd or "").strip()
+    if dtadd:
+        c.setFont(font_name, 9)
+        c.drawString(margin + 60 * mm, y_sep - 39 * mm, f"備考: {dtadd}")
+
+    # 得意先注番（バーコード代替）
+    utno1 = (cache.utno1 or "").strip()
+    if utno1:
+        c.setFont(font_name, 8)
+        c.drawString(margin + 3 * mm, margin + 5 * mm, f"注番: {utno1}")
+
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
+
+
+@router.get("/shipments/{denno}/label")
+def get_label(
+    denno: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """荷札PDFを生成してダウンロードする"""
+    cache = db.query(ShipmentCache).filter(ShipmentCache.denno == denno).first()
+    if not cache:
+        raise HTTPException(status_code=404, detail="荷物が見つかりません")
+
+    status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
+
+    try:
+        pdf_bytes = _generate_label_pdf(cache, status_rec)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=label_{denno}.pdf"},
+    )
