@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from database import get_db, init_db, SessionLocal
@@ -110,22 +110,35 @@ def health():
     return {"status": "ok", "demo_mode": os.getenv("DEMO_MODE", "true").lower() == "true"}
 
 
+_NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0"
+
 # フロントエンド静的ファイルの配信
 _frontend_abs = os.path.abspath(FRONTEND_DIR)
 if os.path.exists(_frontend_abs):
     app.mount("/static", StaticFiles(directory=os.path.join(_frontend_abs, "css")), name="css")
-    app.mount("/js", StaticFiles(directory=os.path.join(_frontend_abs, "js")), name="js")
+
+    @app.get("/js/{filename:path}", include_in_schema=False)
+    def serve_js(filename: str):
+        path = os.path.join(_frontend_abs, "js", filename)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404)
+        resp = FileResponse(path, media_type="application/javascript")
+        resp.headers["Cache-Control"] = _NO_CACHE
+        return resp
 
     @app.get("/", include_in_schema=False)
     def serve_index():
-        return FileResponse(os.path.join(_frontend_abs, "index.html"))
+        resp = FileResponse(os.path.join(_frontend_abs, "index.html"), media_type="text/html")
+        resp.headers["Cache-Control"] = _NO_CACHE
+        return resp
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_frontend(full_path: str):
-        # API パスは除外（念のため）
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404)
-        return FileResponse(os.path.join(_frontend_abs, "index.html"))
+        resp = FileResponse(os.path.join(_frontend_abs, "index.html"), media_type="text/html")
+        resp.headers["Cache-Control"] = _NO_CACHE
+        return resp
 
 
 if __name__ == "__main__":
