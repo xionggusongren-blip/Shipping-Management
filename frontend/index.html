@@ -84,12 +84,19 @@
     <div class="card">
       <div class="card-header">📷 QRスキャン</div>
       <div class="card-body">
-        <!-- 写真撮影方式（推奨） -->
-        <button id="photo-scan-btn" class="btn btn-primary" style="font-size:16px;padding:14px 20px;width:100%">
+        <!-- 写真撮影方式（推奨）
+             label でinputを包むことで Android Chrome でも change イベントが確実に発火する。
+             input を label 内に position:absolute で重ねて透明にし、
+             label 自体をボタンとして見せる。display:none は NG。 -->
+        <label id="photo-scan-btn"
+          style="position:relative;display:flex;align-items:center;justify-content:center;gap:6px;
+                 font-size:16px;padding:14px 20px;width:100%;box-sizing:border-box;cursor:pointer;
+                 background:var(--primary);color:#fff;border:none;border-radius:8px;font-weight:600;
+                 -webkit-tap-highlight-color:transparent">
           📸 カメラで撮影してスキャン
-        </button>
-        <input type="file" accept="image/*" capture="environment" id="photo-input"
-          style="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0">
+          <input type="file" accept="image/*" capture="environment" id="photo-input"
+            style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;font-size:0">
+        </label>
         <p style="color:var(--text-light);font-size:12px;margin-top:8px">
           カメラアプリが起動します。納品書のQRコードを撮影してください。
         </p>

@@ -99,10 +99,10 @@ const App = {
     // 荷札印刷
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
 
-    // スキャン - iOS Safari 完全対応
-    // iOS Safari では input.click() 経由でカメラを開いた後、
-    // change / input イベントが発火しない既知のバグがある。
-    // 対策: visibilitychange / focus でブラウザに戻ったタイミングで files を直接チェックする。
+    // スキャン
+    // label でinputを包む方式（Android Chrome / iOS Safari 両対応）:
+    //   - label クリック → input が自然にアクティブ → change イベント発火
+    //   - iOS Safari フォールバック: visibilitychange / focus で files を直接確認
     const photoInput = document.getElementById("photo-input");
     let _cameraOpened = false;
     let _photoProcessing = false;
@@ -115,22 +115,17 @@ const App = {
       this.photoScan(photoInput).finally(() => { _photoProcessing = false; });
     };
 
-    document.getElementById("photo-scan-btn").addEventListener("click", () => {
-      _cameraOpened = true;
-      photoInput.click();
-    });
+    // input の click で「カメラが開いた」を記録（iOS フォールバック用）
+    photoInput.addEventListener("click", () => { _cameraOpened = true; });
 
-    // Android Chrome / PC: change・input イベントは正常に発火する
+    // Android Chrome / PC: change・input イベント
     photoInput.addEventListener("change", _processPhoto);
     photoInput.addEventListener("input",  _processPhoto);
 
-    // iOS Safari: カメラから戻ったとき visibilitychange / focus で files を確認
-    const _onResume = () => {
-      if (_cameraOpened) setTimeout(_processPhoto, 400);
-    };
+    // iOS Safari フォールバック: カメラから戻ったとき files を確認
+    const _onResume = () => { if (_cameraOpened) setTimeout(_processPhoto, 400); };
     document.addEventListener("visibilitychange", () => { if (!document.hidden) _onResume(); });
     window.addEventListener("focus", _onResume);
-    window.addEventListener("pageshow", _onResume);
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
     document.getElementById("stop-scan-btn").addEventListener("click", () => this.stopScanner());
     document.getElementById("manual-search-btn").addEventListener("click", () => this.manualSearch());
@@ -365,6 +360,7 @@ const App = {
     // ファイルオブジェクトを先に保持してから input をリセット
     // （リセットを先にすると iOS で files が消える場合があるため後で行う）
     area.innerHTML = `<div class="card"><div class="card-body">📂 ファイル受信: ${file.name} (${Math.round(file.size/1024)}KB)<br>🔍 解析中...</div></div>`;
+    area.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
     let result;
     try {
