@@ -331,10 +331,10 @@ const App = {
 
     document.getElementById("scan-result-area").innerHTML =
       `<div class="card"><div class="card-body">🔍 QRコードを解析中...</div></div>`;
+    let html5qr = null;
     try {
-      const html5qr = new Html5Qrcode("reader");
+      html5qr = new Html5Qrcode("photo-reader");
       const result = await html5qr.scanFile(file, false);
-      await html5qr.clear();
       Scanner.beep();
       await this.handleScanResult(result);
     } catch (err) {
@@ -345,6 +345,8 @@ const App = {
             QRコード全体が写るよう撮影し直してください
           </div>
         </div></div>`;
+    } finally {
+      if (html5qr) { try { await html5qr.clear(); } catch(_) {} }
     }
   },
 
