@@ -43,6 +43,8 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+echo [INFO] IBM i 接続ライブラリをインストール中（失敗しても動作可）...
+pip install --quiet -r backend\requirements-ibmi.txt 2>nul || echo [WARNING] IBM i ライブラリ未インストール（DEMO_MODE で動作します）
 echo [OK] 依存関係インストール完了
 
 REM ---------- .env 作成 ----------

@@ -38,6 +38,8 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可）...
+pip install --quiet -r backend\requirements-ibmi.txt 2>nul || echo [WARNING] IBM i ライブラリ未インストール（DEMO_MODE で動作します）
 
 REM ---------- アプリ起動 ----------
 echo [INFO] http://localhost:8000 でアプリを起動します
