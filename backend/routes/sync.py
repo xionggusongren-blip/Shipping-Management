@@ -19,14 +19,14 @@ def _do_sync(db: Session, triggered_by: str = "system") -> dict:
         rows = fetch_from_ibmi()
         count = 0
 
+        seen = set()
         for row in rows:
-            existing = db.query(ShipmentCache).filter(ShipmentCache.denno == row["denno"]).first()
-            if existing:
-                for key, val in row.items():
-                    setattr(existing, key, val)
-                existing.synced_at = datetime.now()
-            else:
-                db.add(ShipmentCache(**row))
+            denno = row.get("denno")
+            if denno in seen:
+                continue  # IBM i に重複 denno がある場合はスキップ
+            seen.add(denno)
+            obj = ShipmentCache(**{**row, "synced_at": datetime.now()})
+            db.merge(obj)  # 存在すれば UPDATE、なければ INSERT
             count += 1
 
         db.commit()
