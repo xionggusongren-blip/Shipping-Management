@@ -99,8 +99,12 @@ const App = {
     // 荷札印刷
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
 
-    // スキャン
-    document.getElementById("photo-input").addEventListener("change", (e) => this.photoScan(e));
+    // スキャン - ボタンから input.click() を明示的に呼ぶ（iOS Safari 対応）
+    const photoInput = document.getElementById("photo-input");
+    document.getElementById("photo-scan-btn").addEventListener("click", () => photoInput.click());
+    const _onPhoto = (e) => { if (e.target.files && e.target.files.length > 0) this.photoScan(e); };
+    photoInput.addEventListener("change", _onPhoto);
+    photoInput.addEventListener("input",  _onPhoto); // iOS fallback
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
     document.getElementById("stop-scan-btn").addEventListener("click", () => this.stopScanner());
     document.getElementById("manual-search-btn").addEventListener("click", () => this.manualSearch());
@@ -331,16 +335,17 @@ const App = {
       area.innerHTML = `<div class="card"><div class="card-body">⚠️ ファイルが取得できませんでした</div></div>`;
       return;
     }
-    e.target.value = "";
 
     area.innerHTML = `<div class="card"><div class="card-body">📂 ファイル受信: ${file.name} (${Math.round(file.size/1024)}KB)<br>🔍 解析中...</div></div>`;
 
     try {
       const result = await this._decodeQrFromFile(file);
+      e.target.value = ""; // ファイル取得完了後にリセット
       if (!result) throw new Error("QRコードを検出できませんでした");
       Scanner.beep();
       await this.handleScanResult(result);
     } catch (err) {
+      e.target.value = "";
       area.innerHTML =
         `<div class="card"><div class="card-body">
           <div style="color:var(--danger)">❌ ${err.message}</div>
