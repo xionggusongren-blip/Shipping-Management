@@ -341,10 +341,7 @@ body {
 }
 #reader {
   width: 100%;
-  max-height: 300px;
 }
-#reader video { width: 100%; height: auto; }
-#reader canvas { display: none; }
 #scanner-overlay {
   position: absolute;
   top: 50%;
