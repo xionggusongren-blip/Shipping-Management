@@ -100,32 +100,6 @@ const App = {
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
 
     // スキャン
-    // label でinputを包む方式（Android Chrome / iOS Safari 両対応）:
-    //   - label クリック → input が自然にアクティブ → change イベント発火
-    //   - iOS Safari フォールバック: visibilitychange / focus で files を直接確認
-    const photoInput = document.getElementById("photo-input");
-    let _cameraOpened = false;
-    let _photoProcessing = false;
-
-    const _processPhoto = () => {
-      if (_photoProcessing) return;
-      if (!photoInput.files || photoInput.files.length === 0) return;
-      _photoProcessing = true;
-      _cameraOpened = false;
-      this.photoScan(photoInput).finally(() => { _photoProcessing = false; });
-    };
-
-    // input の click で「カメラが開いた」を記録（iOS フォールバック用）
-    photoInput.addEventListener("click", () => { _cameraOpened = true; });
-
-    // Android Chrome / PC: change・input イベント
-    photoInput.addEventListener("change", _processPhoto);
-    photoInput.addEventListener("input",  _processPhoto);
-
-    // iOS Safari フォールバック: カメラから戻ったとき files を確認
-    const _onResume = () => { if (_cameraOpened) setTimeout(_processPhoto, 400); };
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) _onResume(); });
-    window.addEventListener("focus", _onResume);
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
     document.getElementById("stop-scan-btn").addEventListener("click", () => this.stopScanner());
     document.getElementById("manual-search-btn").addEventListener("click", () => this.manualSearch());
@@ -155,7 +129,7 @@ const App = {
     if (nav) nav.classList.add("active");
 
     if (tabName === "scan" && !this.scannerStarted) {
-      // スキャン画面に来たら自動起動
+      this.startScanner();
     }
     if (tabName === "admin") {
       this.loadAdminData();
@@ -345,95 +319,6 @@ const App = {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
       })
       .catch((e) => this.showToast(e.message, "error"));
-  },
-
-  // ---- 写真撮影スキャン ----
-  // input: HTMLInputElement（photoInput を直接渡す）
-  async photoScan(input) {
-    const file = input.files[0];
-    const area = document.getElementById("scan-result-area");
-    if (!file) {
-      area.innerHTML = `<div class="card"><div class="card-body">⚠️ ファイルが取得できませんでした</div></div>`;
-      return;
-    }
-
-    // ファイルオブジェクトを先に保持してから input をリセット
-    // （リセットを先にすると iOS で files が消える場合があるため後で行う）
-    area.innerHTML = `<div class="card"><div class="card-body">📂 ファイル受信: ${file.name} (${Math.round(file.size/1024)}KB)<br>🔍 解析中...</div></div>`;
-    area.scrollIntoView({ behavior: "smooth", block: "nearest" });
-
-    let result;
-    try {
-      result = await this._decodeQrFromFile(file);
-    } catch (err) {
-      input.value = "";
-      area.innerHTML =
-        `<div class="card"><div class="card-body">
-          <div style="color:var(--danger)">❌ ${err.message}</div>
-          <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
-            jsQR: ${typeof jsQR !== "undefined" ? "読込済" : "未読込"} /
-            BarcodeDetector: ${"BarcodeDetector" in window ? "対応" : "非対応"}
-          </div>
-        </div></div>`;
-      return;
-    }
-
-    input.value = ""; // デコード完了後にリセット（次回同じ画像も選択可能にする）
-
-    if (!result) {
-      area.innerHTML =
-        `<div class="card"><div class="card-body">
-          <div style="color:var(--danger)">❌ QRコードを検出できませんでした</div>
-          <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
-            jsQR: ${typeof jsQR !== "undefined" ? "読込済" : "未読込"} /
-            BarcodeDetector: ${"BarcodeDetector" in window ? "対応" : "非対応"}
-          </div>
-        </div></div>`;
-      return;
-    }
-
-    Scanner.beep();
-    await this.handleScanResult(result);
-  },
-
-  // 画像ファイルからQRコードをデコードする（BarcodeDetector → jsQR の順で試みる）
-  _decodeQrFromFile(file) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = async () => {
-        URL.revokeObjectURL(url);
-        // canvas に描画して ImageData を取得
-        const canvas = document.createElement("canvas");
-        // 大きすぎると遅いので最大 1500px に縮小
-        const MAX = 1500;
-        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-        canvas.width  = img.width  * scale;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        // 1) BarcodeDetector API（Android Chrome ネイティブ）
-        if (typeof BarcodeDetector !== "undefined") {
-          try {
-            const bd = new BarcodeDetector({ formats: ["qr_code"] });
-            const codes = await bd.detect(canvas);
-            if (codes.length > 0) { resolve(codes[0].rawValue); return; }
-          } catch(_) {}
-        }
-
-        // 2) jsQR（Canvas ベース、iOS / PC でも動く）
-        if (typeof jsQR !== "undefined") {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
-          if (code) { resolve(code.data); return; }
-        }
-
-        reject(new Error("QRコードを検出できませんでした"));
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("画像の読み込みに失敗しました")); };
-      img.src = url;
-    });
   },
 
   // ---- スキャン ----
