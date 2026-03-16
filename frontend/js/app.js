@@ -99,12 +99,38 @@ const App = {
     // 荷札印刷
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
 
-    // スキャン - ボタンから input.click() を明示的に呼ぶ（iOS Safari 対応）
+    // スキャン - iOS Safari 完全対応
+    // iOS Safari では input.click() 経由でカメラを開いた後、
+    // change / input イベントが発火しない既知のバグがある。
+    // 対策: visibilitychange / focus でブラウザに戻ったタイミングで files を直接チェックする。
     const photoInput = document.getElementById("photo-input");
-    document.getElementById("photo-scan-btn").addEventListener("click", () => photoInput.click());
-    const _onPhoto = (e) => { if (e.target.files && e.target.files.length > 0) this.photoScan(e); };
-    photoInput.addEventListener("change", _onPhoto);
-    photoInput.addEventListener("input",  _onPhoto); // iOS fallback
+    let _cameraOpened = false;
+    let _photoProcessing = false;
+
+    const _processPhoto = () => {
+      if (_photoProcessing) return;
+      if (!photoInput.files || photoInput.files.length === 0) return;
+      _photoProcessing = true;
+      _cameraOpened = false;
+      this.photoScan(photoInput).finally(() => { _photoProcessing = false; });
+    };
+
+    document.getElementById("photo-scan-btn").addEventListener("click", () => {
+      _cameraOpened = true;
+      photoInput.click();
+    });
+
+    // Android Chrome / PC: change・input イベントは正常に発火する
+    photoInput.addEventListener("change", _processPhoto);
+    photoInput.addEventListener("input",  _processPhoto);
+
+    // iOS Safari: カメラから戻ったとき visibilitychange / focus で files を確認
+    const _onResume = () => {
+      if (_cameraOpened) setTimeout(_processPhoto, 400);
+    };
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) _onResume(); });
+    window.addEventListener("focus", _onResume);
+    window.addEventListener("pageshow", _onResume);
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
     document.getElementById("stop-scan-btn").addEventListener("click", () => this.stopScanner());
     document.getElementById("manual-search-btn").addEventListener("click", () => this.manualSearch());
@@ -327,25 +353,24 @@ const App = {
   },
 
   // ---- 写真撮影スキャン ----
-  async photoScan(e) {
-    const file = e.target.files[0];
-    // ファイルが選択されたか確認（デバッグ用に常に表示）
+  // input: HTMLInputElement（photoInput を直接渡す）
+  async photoScan(input) {
+    const file = input.files[0];
     const area = document.getElementById("scan-result-area");
     if (!file) {
       area.innerHTML = `<div class="card"><div class="card-body">⚠️ ファイルが取得できませんでした</div></div>`;
       return;
     }
 
+    // ファイルオブジェクトを先に保持してから input をリセット
+    // （リセットを先にすると iOS で files が消える場合があるため後で行う）
     area.innerHTML = `<div class="card"><div class="card-body">📂 ファイル受信: ${file.name} (${Math.round(file.size/1024)}KB)<br>🔍 解析中...</div></div>`;
 
+    let result;
     try {
-      const result = await this._decodeQrFromFile(file);
-      e.target.value = ""; // ファイル取得完了後にリセット
-      if (!result) throw new Error("QRコードを検出できませんでした");
-      Scanner.beep();
-      await this.handleScanResult(result);
+      result = await this._decodeQrFromFile(file);
     } catch (err) {
-      e.target.value = "";
+      input.value = "";
       area.innerHTML =
         `<div class="card"><div class="card-body">
           <div style="color:var(--danger)">❌ ${err.message}</div>
@@ -354,7 +379,25 @@ const App = {
             BarcodeDetector: ${"BarcodeDetector" in window ? "対応" : "非対応"}
           </div>
         </div></div>`;
+      return;
     }
+
+    input.value = ""; // デコード完了後にリセット（次回同じ画像も選択可能にする）
+
+    if (!result) {
+      area.innerHTML =
+        `<div class="card"><div class="card-body">
+          <div style="color:var(--danger)">❌ QRコードを検出できませんでした</div>
+          <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
+            jsQR: ${typeof jsQR !== "undefined" ? "読込済" : "未読込"} /
+            BarcodeDetector: ${"BarcodeDetector" in window ? "対応" : "非対応"}
+          </div>
+        </div></div>`;
+      return;
+    }
+
+    Scanner.beep();
+    await this.handleScanResult(result);
   },
 
   // 画像ファイルからQRコードをデコードする（BarcodeDetector → jsQR の順で試みる）
