@@ -247,6 +247,7 @@ const App = {
       ["nodays_str", "指定納期", d.nodays_str || "-"],
       ["sykdy_str", "出荷日", d.sykdy_str || "-"],
       ["haiso", "配送方法", HAISO[d.haiso] || d.haiso || "-"],
+      ["denno", "伝票番号", d.denno ? String(d.denno) : "-"],
       ["utno1", "得意先注番", d.utno1 || "-"],
       ["tanto", "担当者", d.tanto || "-"],
       ["dtadd", "備考", d.dtadd || "-"],
