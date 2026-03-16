@@ -364,15 +364,19 @@ const App = {
   // QRコードの生データから検索キーを抽出する
   _extractSearchCode(raw) {
     const s = raw.trim();
-    // URLの場合、末尾のパスやクエリパラメータから数字・英数字コードを抽出
+    // カンマ区切り形式（納品書QR）: 最後のフィールドが DENNO
+    if (s.includes(",")) {
+      const parts = s.split(",");
+      const last = parts[parts.length - 1].trim();
+      if (last) return last;
+    }
+    // URLの場合、クエリパラメータまたはパスの末尾からコードを抽出
     try {
       const url = new URL(s);
-      // クエリパラメータから order, no, code, id などを探す
       for (const key of ["order", "no", "code", "id", "utno", "denno", "barcode"]) {
         const val = url.searchParams.get(key);
         if (val) return val.trim();
       }
-      // パスの最後のセグメントを使用
       const parts = url.pathname.split("/").filter(Boolean);
       if (parts.length > 0) return parts[parts.length - 1];
     } catch (_) {
