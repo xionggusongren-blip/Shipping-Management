@@ -27,17 +27,8 @@ const Scanner = {
       const boxSize = Math.min(Math.floor(containerWidth * 0.8), 280);
 
       const config = {
-        fps: 15,
+        fps: 10,
         qrbox: { width: boxSize, height: boxSize },
-        aspectRatio: 1.0,
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.EAN_13,
-          Html5QrcodeSupportedFormats.EAN_8,
-          Html5QrcodeSupportedFormats.ITF,
-        ],
       };
 
       await this._instance.start(
