@@ -45,11 +45,13 @@ COLUMNS = [
 
 def fetch_from_ibmi() -> List[Dict[str, Any]]:
     """IBM i RJU1 テーブルからデータを取得する"""
-    if DEMO_MODE:
-        logger.info("DEMO MODE: IBM i 接続をスキップし、サンプルデータを返します")
-        return _get_demo_data()
+    # 接続情報が揃っていれば ODBC 接続を優先（DEMO_MODE より優先）
+    if IBMI_HOST and IBMI_USER and IBMI_PASSWORD:
+        logger.info(f"IBM i ODBC 接続モード: {IBMI_HOST}")
+        return _fetch_via_odbc()
 
-    return _fetch_via_odbc()
+    logger.info("DEMO MODE: IBM i 接続情報未設定のためサンプルデータを返します")
+    return _get_demo_data()
 
 
 def _fetch_via_odbc() -> List[Dict[str, Any]]:
