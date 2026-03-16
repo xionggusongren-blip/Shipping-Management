@@ -1,9 +1,7 @@
 """
 IBM i (DB2) 接続モジュール
-優先順位:
-  1. NODEJS_API_URL が設定されている → 既存の Node.js API 経由で取得（jt400.jar 不要）
-  2. DEMO_MODE=true → サンプルデータを返す
-  3. それ以外 → JayDeBeApi + jt400.jar 経由で直接接続
+- 本番: pyodbc + IBM i Access ODBC Driver 経由で接続（jt400.jar 不要）
+- デモ: DEMO_MODE=true 時はサンプルデータを返す
 """
 import os
 import logging
@@ -12,20 +10,21 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
-NODEJS_API_URL = os.getenv("NODEJS_API_URL", "").rstrip("/")  # 例: http://localhost:3001
-IBMI_HOST = os.getenv("IBMI_HOST", "192.168.3.230")
-IBMI_USER = os.getenv("IBMI_USER", "")
+IBMI_HOST     = os.getenv("IBMI_HOST", "192.168.3.230")
+IBMI_USER     = os.getenv("IBMI_USER", "")
 IBMI_PASSWORD = os.getenv("IBMI_PASSWORD", "")
-IBMI_LIBRARY = os.getenv("IBMI_LIBRARY", "TREED")
-IBMI_TABLE = os.getenv("IBMI_TABLE", "RJU1")
-IBMI_DRIVER_PATH = os.getenv("IBMI_DRIVER_PATH", "/opt/jt400/jt400.jar")
+IBMI_LIBRARY  = os.getenv("IBMI_LIBRARY", "TREED")
+IBMI_TABLE    = os.getenv("IBMI_TABLE", "RJU1")
 
 QUERY = f"""
 SELECT
-    DENNO, TANTO, UCOD, HCOD, HNAME, HNM2,
-    MNMM, MKRCD, MHNM, SURYO,
+    DENNO, TANTO, UCOD, HCOD,
+    CAST(HNAME AS VARGRAPHIC(60) CCSID 1200) AS HNAME,
+    HNM2, MNMM, MKRCD, MHNM, SURYO,
     NODAYU, NODAYS, SYKDY, HAISO,
-    SYNM1, SYNM2, ADR1T, ADR2T,
+    CAST(SYNM1 AS VARGRAPHIC(60) CCSID 1200) AS SYNM1,
+    CAST(SYNM2 AS VARGRAPHIC(60) CCSID 1200) AS SYNM2,
+    ADR1T, ADR2T,
     UTNO1, JUCHU, URIAG, ORDER,
     SLCRT, DTADD
 FROM {IBMI_LIBRARY}.{IBMI_TABLE}
@@ -44,126 +43,60 @@ COLUMNS = [
 ]
 
 
-def _date_str_to_cyymmdd(date_str: str) -> int:
-    """YYYY-MM-DD → CYYMMDD 整数 (例: '2026-03-15' → 1260315)"""
-    if not date_str:
-        return 0
-    try:
-        y, m, d = date_str.split("-")
-        year = int(y)
-        c = 1 if year >= 2000 else 0
-        return c * 1000000 + (year % 100) * 10000 + int(m) * 100 + int(d)
-    except Exception:
-        return 0
-
-
 def fetch_from_ibmi() -> List[Dict[str, Any]]:
-    """IBM i からデータを取得する（モード自動選択）"""
-
-    # 優先1: Node.js API 経由
-    if NODEJS_API_URL:
-        logger.info(f"Node.js API モード: {NODEJS_API_URL}/api/orders")
-        return _fetch_from_nodejs_api()
-
-    # 優先2: デモモード
+    """IBM i RJU1 テーブルからデータを取得する"""
     if DEMO_MODE:
-        logger.info("DEMO MODE: サンプルデータを返します")
+        logger.info("DEMO MODE: IBM i 接続をスキップし、サンプルデータを返します")
         return _get_demo_data()
 
-    # 優先3: 直接 JDBC 接続
-    return _fetch_direct_ibmi()
+    return _fetch_via_odbc()
 
 
-def _fetch_from_nodejs_api() -> List[Dict[str, Any]]:
-    """既存の Node.js IBM i ダッシュボードの /api/orders から受注残を取得する"""
-    import urllib.request
-    import json
-
-    url = f"{NODEJS_API_URL}/api/orders"
+def _fetch_via_odbc() -> List[Dict[str, Any]]:
+    """pyodbc + IBM i Access ODBC Driver で接続"""
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode())
-    except Exception as e:
-        logger.error(f"Node.js API 呼び出し失敗: {e}")
-        raise RuntimeError(f"Node.js API ({url}) への接続に失敗しました: {e}")
+        import pyodbc
+    except ImportError:
+        raise RuntimeError("pyodbc がインストールされていません。pip install pyodbc を実行してください")
 
-    if not body.get("success"):
-        raise RuntimeError(f"Node.js API エラー: {body.get('error', '不明なエラー')}")
+    conn_str = (
+        f"DRIVER={{IBM i Access ODBC Driver}};"
+        f"SYSTEM={IBMI_HOST};"
+        f"UID={IBMI_USER};"
+        f"PWD={IBMI_PASSWORD};"
+        f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
+        f"UNICODESQL=1"
+    )
 
-    orders = body.get("data", [])
-    result = []
-    for o in orders:
-        result.append({
-            "denno":      int(o.get("denno") or 0),
-            "tanto":      None,
-            "ucod":       int(o.get("customerCode") or 0),
-            "hcod":       int(o.get("productCode") or 0),
-            "hname":      (o.get("productName") or "").strip(),
-            "hnm2":       None,
-            "mnmm":       None,
-            "mkrcd":      None,
-            "mhnm":       None,
-            "suryo":      int(o.get("quantity") or 0),
-            "nodayu":     _date_str_to_cyymmdd(o.get("deliveryDate")),
-            "nodays":     0,
-            "sykdy":      0,
-            "haiso":      None,
-            "synm1":      None,
-            "synm2":      None,
-            "adr1t":      None,
-            "adr2t":      None,
-            "utno1":      None,
-            "juchu":      "1",
-            "uriag":      "0",
-            "order_flg":  "0",
-            "slcrt":      0,
-            "dtadd":      None,
-        })
-
-    logger.info(f"Node.js API から {len(result)} 件取得しました")
-    return result
-
-
-def _fetch_direct_ibmi() -> List[Dict[str, Any]]:
-    """JayDeBeApi + jt400.jar で IBM i に直接接続"""
     try:
-        import jaydebeapi
-        conn = jaydebeapi.connect(
-            "com.ibm.as400.access.AS400JDBCDriver",
-            f"jdbc:as400://{IBMI_HOST}",
-            [IBMI_USER, IBMI_PASSWORD],
-            IBMI_DRIVER_PATH,
-        )
+        conn = pyodbc.connect(conn_str, timeout=30)
         cursor = conn.cursor()
         cursor.execute(QUERY)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
-
-        result = []
-        for row in rows:
-            record = dict(zip(COLUMNS, row))
-            for key in ["denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"]:
-                if record.get(key) is not None:
-                    try:
-                        record[key] = int(record[key])
-                    except (ValueError, TypeError):
-                        record[key] = 0
-            for key in COLUMNS:
-                if isinstance(record.get(key), str):
-                    record[key] = record[key].strip()
-            result.append(record)
-
-        logger.info(f"IBM i (直接接続) から {len(result)} 件取得しました")
-        return result
-
-    except ImportError:
-        logger.error("JayDeBeApi がインストールされていません")
-        raise RuntimeError("JayDeBeApi not installed。NODEJS_API_URL か DEMO_MODE=true を設定してください")
     except Exception as e:
-        logger.error(f"IBM i 接続エラー: {e}")
+        logger.error(f"IBM i ODBC 接続エラー: {e}")
         raise
+
+    result = []
+    for row in rows:
+        record = dict(zip(COLUMNS, row))
+        # 数値フィールドを int に変換
+        for key in ["denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"]:
+            if record.get(key) is not None:
+                try:
+                    record[key] = int(record[key])
+                except (ValueError, TypeError):
+                    record[key] = 0
+        # 文字列フィールドをトリム
+        for key in COLUMNS:
+            if isinstance(record.get(key), str):
+                record[key] = record[key].strip()
+        result.append(record)
+
+    logger.info(f"IBM i から {len(result)} 件取得しました")
+    return result
 
 
 def _get_demo_data() -> List[Dict[str, Any]]:

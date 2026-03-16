@@ -1,2 +1,1 @@
-JayDeBeApi==1.2.3
-JPype1==1.5.0
+pyodbc==5.2.0
