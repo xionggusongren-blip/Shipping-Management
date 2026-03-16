@@ -23,12 +23,15 @@ const Scanner = {
 
       // スキャン枠をコンテナサイズに合わせて動的に設定
       const container = document.getElementById(elementId);
-      const containerWidth = container ? container.offsetWidth : 300;
-      const boxSize = Math.min(Math.floor(containerWidth * 0.8), 280);
+      const containerWidth = container ? container.offsetWidth : 0;
+      const boxSize = containerWidth > 50
+        ? Math.min(Math.floor(containerWidth * 0.8), 280)
+        : 250;
 
       const config = {
         fps: 10,
         qrbox: { width: boxSize, height: boxSize },
+        aspectRatio: 1.333,
       };
 
       await this._instance.start(
