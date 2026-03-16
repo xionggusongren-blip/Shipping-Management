@@ -111,16 +111,21 @@ def health():
 
 
 # フロントエンド静的ファイルの配信
-if os.path.exists(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css"), html=False), name="css")
+_frontend_abs = os.path.abspath(FRONTEND_DIR)
+if os.path.exists(_frontend_abs):
+    app.mount("/static", StaticFiles(directory=os.path.join(_frontend_abs, "css")), name="css")
+    app.mount("/js", StaticFiles(directory=os.path.join(_frontend_abs, "js")), name="js")
 
     @app.get("/", include_in_schema=False)
+    def serve_index():
+        return FileResponse(os.path.join(_frontend_abs, "index.html"))
+
     @app.get("/{full_path:path}", include_in_schema=False)
-    def serve_frontend(full_path: str = ""):
-        index = os.path.join(FRONTEND_DIR, "index.html")
-        if os.path.exists(index):
-            return FileResponse(index)
-        return {"message": "フロントエンドが見つかりません"}
+    def serve_frontend(full_path: str):
+        # API パスは除外（念のため）
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        return FileResponse(os.path.join(_frontend_abs, "index.html"))
 
 
 if __name__ == "__main__":
