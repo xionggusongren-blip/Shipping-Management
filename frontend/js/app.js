@@ -361,11 +361,36 @@ const App = {
     await this.handleScanResult(val);
   },
 
-  async handleScanResult(code) {
-    document.getElementById("scan-result-area").innerHTML =
-      `<div class="card"><div class="card-body">🔍 検索中: <strong>${esc(code)}</strong></div></div>`;
+  // QRコードの生データから検索キーを抽出する
+  _extractSearchCode(raw) {
+    const s = raw.trim();
+    // URLの場合、末尾のパスやクエリパラメータから数字・英数字コードを抽出
     try {
-      const data = await Api.scanBarcode(code);
+      const url = new URL(s);
+      // クエリパラメータから order, no, code, id などを探す
+      for (const key of ["order", "no", "code", "id", "utno", "denno", "barcode"]) {
+        const val = url.searchParams.get(key);
+        if (val) return val.trim();
+      }
+      // パスの最後のセグメントを使用
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length > 0) return parts[parts.length - 1];
+    } catch (_) {
+      // URL ではない → そのまま使う
+    }
+    return s;
+  },
+
+  async handleScanResult(code) {
+    const searchCode = this._extractSearchCode(code);
+    const rawInfo = searchCode !== code
+      ? `<div style="font-size:11px;color:var(--text-light);margin-top:4px">生データ: ${esc(code)}</div>`
+      : "";
+
+    document.getElementById("scan-result-area").innerHTML =
+      `<div class="card"><div class="card-body">🔍 検索中: <strong>${esc(searchCode)}</strong>${rawInfo}</div></div>`;
+    try {
+      const data = await Api.scanBarcode(searchCode);
       document.getElementById("manual-barcode").value = "";
       document.getElementById("scan-result-area").innerHTML = "";
       this.currentDetail = data;
@@ -374,7 +399,16 @@ const App = {
       history.pushState({ detail: data.denno }, "");
     } catch (e) {
       document.getElementById("scan-result-area").innerHTML =
-        `<div class="card"><div class="card-body" style="color:var(--danger)">❌ ${esc(e.message)}</div></div>`;
+        `<div class="card"><div class="card-body">
+          <div style="color:var(--danger)">❌ ${esc(e.message)}</div>
+          <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
+            スキャン値: <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px">${esc(searchCode)}</code>
+          </div>
+          ${rawInfo}
+          <div style="font-size:11px;margin-top:8px;color:var(--text-light)">
+            ※ QRコードの内容がUTNO1・品番・伝票番号と一致しない場合は手動入力をお試しください
+          </div>
+        </div></div>`;
     }
   },
 

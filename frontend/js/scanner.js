@@ -21,10 +21,15 @@ const Scanner = {
       }
       this._instance = new Html5Qrcode(elementId, { verbose: false });
 
+      // スキャン枠をコンテナサイズに合わせて動的に設定
+      const container = document.getElementById(elementId);
+      const containerWidth = container ? container.offsetWidth : 300;
+      const boxSize = Math.min(Math.floor(containerWidth * 0.8), 280);
+
       const config = {
-        fps: 10,
-        qrbox: { width: 200, height: 120 },
-        aspectRatio: 1.5,
+        fps: 15,
+        qrbox: { width: boxSize, height: boxSize },
+        aspectRatio: 1.0,
         formatsToSupport: [
           Html5QrcodeSupportedFormats.QR_CODE,
           Html5QrcodeSupportedFormats.CODE_128,

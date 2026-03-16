@@ -152,19 +152,22 @@ def scan_barcode(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """バーコード値で荷物を検索（UTNO1 または HCOD）"""
+    """バーコード値で荷物を検索（UTNO1、HCOD、または DENNO）"""
+    b = barcode.strip()
     # UTNO1 で検索
-    cache = db.query(ShipmentCache).filter(ShipmentCache.utno1 == barcode.strip()).first()
+    cache = db.query(ShipmentCache).filter(ShipmentCache.utno1 == b).first()
     if not cache:
-        # HCOD で検索（数値の場合）
+        # 数値の場合: DENNO または HCOD で検索
         try:
-            hcod_val = int(barcode.strip())
-            cache = db.query(ShipmentCache).filter(ShipmentCache.hcod == hcod_val).first()
+            int_val = int(b)
+            cache = db.query(ShipmentCache).filter(ShipmentCache.denno == int_val).first()
+            if not cache:
+                cache = db.query(ShipmentCache).filter(ShipmentCache.hcod == int_val).first()
         except ValueError:
             pass
 
     if not cache:
-        raise HTTPException(status_code=404, detail=f"バーコード '{barcode}' に一致する荷物が見つかりません")
+        raise HTTPException(status_code=404, detail=f"バーコード '{b}' に一致する荷物が見つかりません")
 
     status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == cache.denno).first()
     return _build_response(cache, status_rec)
