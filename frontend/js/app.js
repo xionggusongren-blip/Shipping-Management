@@ -325,11 +325,15 @@ const App = {
   // ---- 写真撮影スキャン ----
   async photoScan(e) {
     const file = e.target.files[0];
-    if (!file) return;
+    // ファイルが選択されたか確認（デバッグ用に常に表示）
+    const area = document.getElementById("scan-result-area");
+    if (!file) {
+      area.innerHTML = `<div class="card"><div class="card-body">⚠️ ファイルが取得できませんでした</div></div>`;
+      return;
+    }
     e.target.value = "";
 
-    document.getElementById("scan-result-area").innerHTML =
-      `<div class="card"><div class="card-body">🔍 QRコードを解析中...</div></div>`;
+    area.innerHTML = `<div class="card"><div class="card-body">📂 ファイル受信: ${file.name} (${Math.round(file.size/1024)}KB)<br>🔍 解析中...</div></div>`;
 
     try {
       const result = await this._decodeQrFromFile(file);
@@ -337,11 +341,12 @@ const App = {
       Scanner.beep();
       await this.handleScanResult(result);
     } catch (err) {
-      document.getElementById("scan-result-area").innerHTML =
+      area.innerHTML =
         `<div class="card"><div class="card-body">
           <div style="color:var(--danger)">❌ ${err.message}</div>
           <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
-            QRコード全体が写るよう撮影し直してください
+            jsQR: ${typeof jsQR !== "undefined" ? "読込済" : "未読込"} /
+            BarcodeDetector: ${"BarcodeDetector" in window ? "対応" : "非対応"}
           </div>
         </div></div>`;
     }
