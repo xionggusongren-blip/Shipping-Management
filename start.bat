@@ -30,6 +30,15 @@ if not exist "backend\.env" (
 REM ---------- 仮想環境の有効化 ----------
 call .venv\Scripts\activate.bat
 
+REM ---------- 依存関係確認 ----------
+echo [INFO] 依存関係を確認中...
+pip install --quiet -r backend\requirements.txt
+if errorlevel 1 (
+    echo [ERROR] pip install に失敗しました
+    pause
+    exit /b 1
+)
+
 REM ---------- アプリ起動 ----------
 echo [INFO] http://localhost:8000 でアプリを起動します
 echo        ブラウザで上記 URL を開いてください
