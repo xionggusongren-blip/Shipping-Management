@@ -1,6 +1,10 @@
 """
 荷物管理Webアプリ - FastAPI バックエンド
 """
+# .env を最初に読み込む（他モジュールの import より先に実行する必要がある）
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -18,9 +22,6 @@ from auth import (
 )
 from models import UserLogin, Token
 from routes import shipments, sync, labels
-from dotenv import load_dotenv
-
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
