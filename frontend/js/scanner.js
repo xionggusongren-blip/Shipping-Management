@@ -6,11 +6,30 @@ const Scanner = {
   _stream: null,
   _interval: null,
   _detecting: false,
+  _frameCount: 0,
+
+  _log(msg) {
+    console.log("[Scanner]", msg);
+    const el = document.getElementById("scan-debug");
+    if (el) {
+      const time = new Date().toLocaleTimeString("ja-JP");
+      el.innerHTML += `<div>${time} ${msg}</div>`;
+      el.scrollTop = el.scrollHeight;
+    }
+  },
 
   async start(elementId, onResult) {
+    this._frameCount = 0;
+    const dbg = document.getElementById("scan-debug");
+    if (dbg) dbg.innerHTML = "";
+
+    this._log("起動開始...");
+    this._log("BarcodeDetector: " + ("BarcodeDetector" in window ? "✅ 対応" : "❌ 非対応"));
+    this._log("getUserMedia: " + (navigator.mediaDevices ? "✅ 対応" : "❌ 非対応"));
+
     const container = document.getElementById(elementId);
     if (!container) {
-      console.error("[Scanner] #" + elementId + " が見つかりません");
+      this._log("❌ #" + elementId + " が見つかりません");
       return false;
     }
 
@@ -25,56 +44,61 @@ const Scanner = {
     container.appendChild(video);
 
     // カメラ権限取得
+    this._log("カメラ権限リクエスト中...");
     try {
       this._stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } }
       });
+      this._log("✅ カメラ権限OK");
     } catch (e) {
+      this._log("❌ カメラエラー: " + e.name + " - " + e.message);
       container.innerHTML =
         `<div style="padding:24px;text-align:center;color:#e53e3e;background:#1a202c;border-radius:8px">
           <div style="font-size:32px;margin-bottom:8px">🚫</div>
           <div style="font-weight:600">カメラへのアクセスを許可してください</div>
-          <div style="font-size:12px;margin-top:8px;color:#a0aec0">${e.message}</div>
+          <div style="font-size:12px;margin-top:8px;color:#a0aec0">${e.name}: ${e.message}</div>
         </div>`;
-      console.error("[Scanner] カメラ起動失敗:", e);
       return false;
     }
 
     video.srcObject = this._stream;
     try {
       await video.play();
+      this._log("✅ カメラ映像開始 " + video.videoWidth + "x" + video.videoHeight);
     } catch (e) {
-      console.error("[Scanner] video.play() 失敗:", e);
+      this._log("❌ video.play() 失敗: " + e.message);
     }
 
     // BarcodeDetector 非対応端末の対応
     if (!("BarcodeDetector" in window)) {
-      container.insertAdjacentHTML("beforeend",
-        `<div style="padding:8px;text-align:center;color:#f6ad55;font-size:12px">
-          ⚠ QR自動検出非対応。カメラは表示されています。手動入力をご利用ください。
-        </div>`);
-      console.warn("[Scanner] BarcodeDetector非対応");
-      return true; // カメラ映像は表示する
+      this._log("❌ BarcodeDetector非対応 → 手動入力を使用してください");
+      return true;
     }
 
     const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    console.log("[Scanner] 検出開始");
+    this._log("✅ QR検出ループ開始 (300ms間隔)");
 
     this._interval = setInterval(async () => {
       if (this._detecting || video.readyState < 2 || video.paused) return;
       this._detecting = true;
+      this._frameCount++;
+      if (this._frameCount % 10 === 0) {
+        this._log("スキャン中... " + this._frameCount + "フレーム処理済");
+      }
       try {
         const codes = await detector.detect(video);
         if (codes.length > 0) {
           const value = codes[0].rawValue;
-          console.log("[Scanner] QR検出:", value);
+          this._log("🎉 QR検出! " + value);
           clearInterval(this._interval);
           this._interval = null;
           this.beep();
           await this.stop();
           onResult(value);
         }
-      } catch (_) {}
+      } catch (e) {
+        this._log("detect()エラー: " + e.message);
+      }
       this._detecting = false;
     }, 300);
 
