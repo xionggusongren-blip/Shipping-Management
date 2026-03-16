@@ -27,6 +27,14 @@ if not exist "backend\.env" (
     exit /b 1
 )
 
+REM ---------- 最新コードを取得 ----------
+echo [INFO] 最新コードを取得中 (git pull)...
+git pull
+if errorlevel 1 (
+    echo [WARNING] git pull に失敗しました。現在のコードで起動します。
+)
+echo.
+
 REM ---------- 仮想環境の有効化 ----------
 call .venv\Scripts\activate.bat
 
