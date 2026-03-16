@@ -326,28 +326,65 @@ const App = {
   async photoScan(e) {
     const file = e.target.files[0];
     if (!file) return;
-    // 同じファイルを再選択できるようリセット
     e.target.value = "";
 
     document.getElementById("scan-result-area").innerHTML =
       `<div class="card"><div class="card-body">🔍 QRコードを解析中...</div></div>`;
-    let html5qr = null;
+
     try {
-      html5qr = new Html5Qrcode("photo-reader");
-      const result = await html5qr.scanFile(file, false);
+      const result = await this._decodeQrFromFile(file);
+      if (!result) throw new Error("QRコードを検出できませんでした");
       Scanner.beep();
       await this.handleScanResult(result);
     } catch (err) {
       document.getElementById("scan-result-area").innerHTML =
         `<div class="card"><div class="card-body">
-          <div style="color:var(--danger)">❌ QRコードを検出できませんでした</div>
+          <div style="color:var(--danger)">❌ ${err.message}</div>
           <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
             QRコード全体が写るよう撮影し直してください
           </div>
         </div></div>`;
-    } finally {
-      if (html5qr) { try { await html5qr.clear(); } catch(_) {} }
     }
+  },
+
+  // 画像ファイルからQRコードをデコードする（BarcodeDetector → jsQR の順で試みる）
+  _decodeQrFromFile(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = async () => {
+        URL.revokeObjectURL(url);
+        // canvas に描画して ImageData を取得
+        const canvas = document.createElement("canvas");
+        // 大きすぎると遅いので最大 1500px に縮小
+        const MAX = 1500;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        canvas.width  = img.width  * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        // 1) BarcodeDetector API（Android Chrome ネイティブ）
+        if (typeof BarcodeDetector !== "undefined") {
+          try {
+            const bd = new BarcodeDetector({ formats: ["qr_code"] });
+            const codes = await bd.detect(canvas);
+            if (codes.length > 0) { resolve(codes[0].rawValue); return; }
+          } catch(_) {}
+        }
+
+        // 2) jsQR（Canvas ベース、iOS / PC でも動く）
+        if (typeof jsQR !== "undefined") {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          if (code) { resolve(code.data); return; }
+        }
+
+        reject(new Error("QRコードを検出できませんでした"));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("画像の読み込みに失敗しました")); };
+      img.src = url;
+    });
   },
 
   // ---- スキャン ----
