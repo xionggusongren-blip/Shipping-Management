@@ -3,7 +3,7 @@
 """
 # .env を最初に読み込む（他モジュールの import より先に実行する必要がある）
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 import os
 import logging
@@ -31,7 +31,7 @@ FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """起動時初期化"""
-    logger.info("アプリケーション起動中...")
+    logger.info(f"アプリケーション起動中... DEMO_MODE={os.getenv('DEMO_MODE')}")
     init_db()
     db = SessionLocal()
     try:
