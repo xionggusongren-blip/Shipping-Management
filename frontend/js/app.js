@@ -128,8 +128,10 @@ const App = {
     const nav = document.querySelector(`[data-tab="${tabName}"]`);
     if (nav) nav.classList.add("active");
 
-    if (tabName === "scan" && !this.scannerStarted) {
-      this.startScanner();
+    if (tabName === "scan") {
+      const dbg = document.getElementById("scan-debug");
+      if (dbg) { dbg.innerHTML = ""; this._dbgLog("スキャンタブを開きました"); }
+      if (!this.scannerStarted) this.startScanner();
     }
     if (tabName === "admin") {
       this.loadAdminData();
@@ -322,17 +324,44 @@ const App = {
   },
 
   // ---- スキャン ----
+  _dbgLog(msg) {
+    console.log("[App]", msg);
+    const el = document.getElementById("scan-debug");
+    if (el) {
+      const time = new Date().toLocaleTimeString("ja-JP");
+      el.innerHTML += `<div>${time} ${msg}</div>`;
+      el.scrollTop = el.scrollHeight;
+    }
+  },
+
   async startScanner() {
     const btn = document.getElementById("start-scan-btn");
     const stopBtn = document.getElementById("stop-scan-btn");
+    const dbg = document.getElementById("scan-debug");
+    if (dbg) dbg.innerHTML = "";
+    this._dbgLog("startScanner() 呼び出し");
+
     btn.disabled = true;
     btn.textContent = "起動中...";
 
-    const started = await Scanner.start("reader", async (code) => {
-      Scanner.beep();
-      await this.stopScanner();
-      await this.handleScanResult(code);
-    });
+    let started = false;
+    try {
+      if (typeof Scanner === "undefined") {
+        this._dbgLog("❌ Scanner未定義 - scanner.jsの読み込み失敗");
+        throw new Error("Scanner未定義");
+      }
+      this._dbgLog("Scanner.start() 呼び出し...");
+      started = await Scanner.start("reader", async (code) => {
+        Scanner.beep();
+        await this.stopScanner();
+        await this.handleScanResult(code);
+      });
+    } catch (e) {
+      this._dbgLog("❌ エラー: " + e.message);
+      btn.disabled = false;
+      btn.textContent = "📷 カメラ起動";
+      return;
+    }
 
     if (started) {
       btn.style.display = "none";
@@ -340,7 +369,7 @@ const App = {
       this.scannerStarted = true;
     } else {
       btn.disabled = false;
-      btn.textContent = "カメラ起動";
+      btn.textContent = "📷 カメラ起動";
       this.showToast("カメラを起動できませんでした。手動入力をお使いください", "error");
     }
   },
