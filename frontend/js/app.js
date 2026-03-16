@@ -396,11 +396,7 @@ const App = {
     try {
       const data = await Api.scanBarcode(searchCode);
       document.getElementById("manual-barcode").value = "";
-      document.getElementById("scan-result-area").innerHTML = "";
-      this.currentDetail = data;
-      this._renderDetail(data);
-      document.getElementById("detail-panel").classList.add("open");
-      history.pushState({ detail: data.denno }, "");
+      this._showShipConfirm(data);
     } catch (e) {
       document.getElementById("scan-result-area").innerHTML =
         `<div class="card"><div class="card-body">
@@ -413,6 +409,83 @@ const App = {
             ※ QRコードの内容がUTNO1・品番・伝票番号と一致しない場合は手動入力をお試しください
           </div>
         </div></div>`;
+    }
+  },
+
+  _showShipConfirm(data) {
+    const alreadyShipped = data.status === "出荷済" || data.status === "納品完了";
+    const statusHtml = alreadyShipped
+      ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px">
+           ⚠️ この伝票はすでに「${esc(data.status)}」です
+         </div>`
+      : "";
+
+    document.getElementById("scan-result-area").innerHTML =
+      `<div class="card" style="border:2px solid var(--primary)">
+        <div class="card-header" style="background:var(--primary);color:#fff">
+          📦 出荷確認
+        </div>
+        <div class="card-body">
+          ${statusHtml}
+          <table style="width:100%;font-size:14px;border-collapse:collapse">
+            <tr><td style="color:var(--text-light);padding:4px 0;width:6em">伝票番号</td><td style="padding:4px 0"><strong>#${esc(String(data.denno))}</strong></td></tr>
+            <tr><td style="color:var(--text-light);padding:4px 0">品名</td><td style="padding:4px 0">${esc(data.hname || "-")}</td></tr>
+            <tr><td style="color:var(--text-light);padding:4px 0">出荷先</td><td style="padding:4px 0">${esc(data.synm1 || "-")}</td></tr>
+            <tr><td style="color:var(--text-light);padding:4px 0">数量</td><td style="padding:4px 0">${esc(String(data.suryo || 0))}</td></tr>
+            <tr><td style="color:var(--text-light);padding:4px 0">納期</td><td style="padding:4px 0">${esc(data.nodayu_str || "-")}</td></tr>
+          </table>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button id="ship-confirm-btn" class="btn btn-primary" style="flex:1;font-size:16px;padding:12px">
+              🚚 出荷する
+            </button>
+            <button id="ship-detail-btn" class="btn" style="font-size:13px;padding:12px">
+              詳細
+            </button>
+            <button id="ship-cancel-btn" class="btn btn-danger" style="font-size:13px;padding:12px">
+              ✕
+            </button>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById("ship-confirm-btn").addEventListener("click", () => this._doShip(data));
+    document.getElementById("ship-detail-btn").addEventListener("click", () => {
+      document.getElementById("scan-result-area").innerHTML = "";
+      this.currentDetail = data;
+      this._renderDetail(data);
+      document.getElementById("detail-panel").classList.add("open");
+      history.pushState({ detail: data.denno }, "");
+    });
+    document.getElementById("ship-cancel-btn").addEventListener("click", () => {
+      document.getElementById("scan-result-area").innerHTML = "";
+    });
+  },
+
+  async _doShip(data) {
+    const btn = document.getElementById("ship-confirm-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "処理中..."; }
+    try {
+      await Api.updateStatus(data.denno, "出荷済", data.memo || "");
+      document.getElementById("scan-result-area").innerHTML =
+        `<div class="card" style="border:2px solid var(--success,#28a745)">
+          <div class="card-body" style="text-align:center;padding:20px">
+            <div style="font-size:40px;margin-bottom:8px">✅</div>
+            <div style="font-size:16px;font-weight:bold">出荷済みにしました</div>
+            <div style="color:var(--text-light);margin-top:4px">伝票 #${esc(String(data.denno))} &nbsp;${esc(data.synm1 || "")}</div>
+            <div style="color:var(--text-light);font-size:12px;margin-top:4px">${new Date().toLocaleString("ja-JP")}</div>
+          </div>
+        </div>`;
+      this.showToast(`伝票 #${data.denno} を出荷済みにしました`, "success");
+      // 一覧データも更新
+      const item = this.listData.find((x) => x.denno === data.denno);
+      if (item) item.status = "出荷済";
+      // 3秒後に結果エリアをクリアして次のスキャン待機
+      setTimeout(() => {
+        document.getElementById("scan-result-area").innerHTML = "";
+      }, 3000);
+    } catch (e) {
+      this.showToast("出荷更新失敗: " + e.message, "error");
+      if (btn) { btn.disabled = false; btn.textContent = "🚚 出荷する"; }
     }
   },
 
