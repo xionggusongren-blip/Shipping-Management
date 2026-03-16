@@ -1,7 +1,7 @@
 """荷物一覧・詳細・ステータス更新 API"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, distinct
 from typing import Optional, List
 from datetime import datetime
 
@@ -33,6 +33,21 @@ def _auto_status(cache: ShipmentCache) -> str:
     if cache.juchu == "1":
         return "未処理"
     return "未処理"
+
+
+@router.get("/tantos")
+def get_tantos(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """担当者コード一覧を返す"""
+    rows = (
+        db.query(distinct(ShipmentCache.tanto))
+        .filter(ShipmentCache.tanto.isnot(None), ShipmentCache.tanto != "")
+        .order_by(ShipmentCache.tanto)
+        .all()
+    )
+    return [{"tanto": r[0]} for r in rows]
 
 
 @router.get("/shipments", response_model=List[dict])
@@ -83,7 +98,7 @@ def get_shipments(
 
         results.append({
             "denno": c.denno,
-            "tanto": c.tanto,
+            "tanto": (c.tanto or "").strip(),
             "ucod": c.ucod,
             "hname": c.hname,
             "synm1": c.synm1,

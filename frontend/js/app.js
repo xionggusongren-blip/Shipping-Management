@@ -28,7 +28,27 @@ const App = {
     if (user.role === "admin") {
       document.getElementById("nav-admin").style.display = "flex";
     }
-    await this.loadShipments();
+    await Promise.all([this.loadTantos(), this.loadShipments()]);
+  },
+
+  async loadTantos() {
+    try {
+      const tantos = await Api.getTantos();
+      const sel = document.getElementById("filter-tanto");
+      // 既存オプション（全担当）を残して追加
+      const current = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      tantos.forEach(({ tanto }) => {
+        const opt = document.createElement("option");
+        opt.value = tanto;
+        opt.textContent = tanto;
+        sel.appendChild(opt);
+      });
+      // 選択状態を復元
+      if (current) sel.value = current;
+    } catch (e) {
+      console.warn("担当者一覧の取得失敗:", e);
+    }
   },
 
   showLogin() {
@@ -206,6 +226,7 @@ const App = {
         <span>📦 ${esc(item.synm1 || "-")}</span>
         <span>数量: ${item.suryo || 0}</span>
         <span class="${dateClass}">納期: ${nodayu}</span>
+        ${item.tanto ? `<span>👤 ${esc(item.tanto)}</span>` : ""}
         ${item.haiso ? `<span>🚚 ${esc(item.haiso)}</span>` : ""}
       </div>
     </li>`;
