@@ -16,30 +16,32 @@ IBMI_PASSWORD = os.getenv("IBMI_PASSWORD", "")
 IBMI_LIBRARY  = os.getenv("IBMI_LIBRARY", "TREED")
 IBMI_TABLE    = os.getenv("IBMI_TABLE", "RJU1")
 
-QUERY = f"""
-SELECT
-    DENNO, TANTO, UCOD, HCOD,
-    CAST(HNAME AS VARGRAPHIC(60) CCSID 1200) AS HNAME,
-    HNM2, MNMM, MKRCD, MHNM, SURYO,
-    NODAYU, NODAYS, SYKDY, HAISO,
-    CAST(SYNM1 AS VARGRAPHIC(60) CCSID 1200) AS SYNM1,
-    CAST(SYNM2 AS VARGRAPHIC(60) CCSID 1200) AS SYNM2,
-    ADR1T, ADR2T,
-    UTNO1, JUCHU, URIAG, ORDER,
-    SLCRT, DTADD
-FROM {IBMI_LIBRARY}.{IBMI_TABLE}
-WHERE RJU1D <> '1'
-  AND URIAG <> '1'
-ORDER BY NODAYU, DENNO
-"""
-
-COLUMNS = [
-    "denno", "tanto", "ucod", "hcod", "hname", "hnm2",
-    "mnmm", "mkrcd", "mhnm", "suryo",
-    "nodayu", "nodays", "sykdy", "haiso",
-    "synm1", "synm2", "adr1t", "adr2t",
-    "utno1", "juchu", "uriag", "order_flg",
-    "slcrt", "dtadd",
+# 取得したいカラム: (IBMiカラム名, アプリ内フィールド名, Unicode変換が必要か)
+DESIRED_COLUMNS = [
+    ("DENNO",  "denno",     False),
+    ("TANTO",  "tanto",     False),
+    ("UCOD",   "ucod",      False),
+    ("HCOD",   "hcod",      False),
+    ("HNAME",  "hname",     True),
+    ("HNM2",   "hnm2",      False),
+    ("MNMM",   "mnmm",      False),
+    ("MKRCD",  "mkrcd",     False),
+    ("MHNM",   "mhnm",      False),
+    ("SURYO",  "suryo",     False),
+    ("NODAYU", "nodayu",    False),
+    ("NODAYS", "nodays",    False),
+    ("SYKDY",  "sykdy",     False),
+    ("HAISO",  "haiso",     False),
+    ("SYNM1",  "synm1",     True),
+    ("SYNM2",  "synm2",     True),
+    ("ADR1T",  "adr1t",     False),
+    ("ADR2T",  "adr2t",     False),
+    ("UTNO1",  "utno1",     False),
+    ("JUCHU",  "juchu",     False),
+    ("URIAG",  "uriag",     False),
+    ("ORDER",  "order_flg", False),
+    ("SLCRT",  "slcrt",     False),
+    ("DTADD",  "dtadd",     False),
 ]
 
 
@@ -55,7 +57,7 @@ def fetch_from_ibmi() -> List[Dict[str, Any]]:
 
 
 def _fetch_via_odbc() -> List[Dict[str, Any]]:
-    """pyodbc + IBM i Access ODBC Driver で接続"""
+    """pyodbc + IBM i Access ODBC Driver で接続（カラムを動的に検出）"""
     try:
         import pyodbc
     except ImportError:
@@ -73,27 +75,62 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
     try:
         conn = pyodbc.connect(conn_str, timeout=30)
         cursor = conn.cursor()
-        cursor.execute(QUERY)
+
+        # テーブルに存在するカラムを確認
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            (IBMI_LIBRARY, IBMI_TABLE)
+        )
+        existing = {row[0].upper() for row in cursor.fetchall()}
+        logger.info(f"RJU1 カラム数: {len(existing)}")
+
+        # 存在するカラムのみ SELECT に含める
+        select_parts = []
+        used_columns = []  # (アプリ内フィールド名,)
+        for col, field, needs_cast in DESIRED_COLUMNS:
+            if col not in existing:
+                logger.debug(f"カラム {col} は存在しないためスキップ")
+                continue
+            if needs_cast:
+                select_parts.append(f"CAST({col} AS VARGRAPHIC(60) CCSID 1200) AS {col}")
+            else:
+                select_parts.append(col)
+            used_columns.append(field)
+
+        # WHERE 句（URIAG が存在する場合のみ条件追加）
+        where = "WHERE RJU1D <> '1'"
+        if "URIAG" in existing:
+            where += " AND URIAG <> '1'"
+
+        query = (
+            f"SELECT {', '.join(select_parts)} "
+            f"FROM {IBMI_LIBRARY}.{IBMI_TABLE} "
+            f"{where} "
+            f"ORDER BY NODAYU, DENNO"
+        )
+        logger.info(f"実行クエリ: {query[:120]}...")
+
+        cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
     except Exception as e:
-        logger.error(f"IBM i ODBC 接続エラー: {e}")
+        logger.error(f"IBM i ODBC エラー: {e}")
         raise
 
+    int_fields = {"denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"}
     result = []
     for row in rows:
-        record = dict(zip(COLUMNS, row))
-        # 数値フィールドを int に変換
-        for key in ["denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"]:
-            if record.get(key) is not None:
+        record = dict(zip(used_columns, row))
+        for key in int_fields:
+            if key in record and record[key] is not None:
                 try:
                     record[key] = int(record[key])
                 except (ValueError, TypeError):
                     record[key] = 0
-        # 文字列フィールドをトリム
-        for key in COLUMNS:
-            if isinstance(record.get(key), str):
+        for key in list(record.keys()):
+            if isinstance(record[key], str):
                 record[key] = record[key].strip()
         result.append(record)
 
