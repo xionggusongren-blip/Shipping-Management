@@ -5,6 +5,7 @@ const App = {
   currentTab: "list",
   currentDetail: null,
   scannerStarted: false,
+  _cameraMode: false,
   listData: [],
   filterParams: {},
 
@@ -352,8 +353,8 @@ const App = {
       }
       this._dbgLog("Scanner.start() 呼び出し...");
       started = await Scanner.start("reader", async (code) => {
-        Scanner.beep();
         await this.stopScanner();
+        this._cameraMode = true; // stop後にセット（自動再起動フラグ）
         await this.handleScanResult(code);
       });
     } catch (e) {
@@ -383,6 +384,19 @@ const App = {
     btn.textContent = "📷 カメラ起動";
     stopBtn.style.display = "none";
     this.scannerStarted = false;
+    this._cameraMode = false;
+  },
+
+  // カメラスキャン中だった場合のみ自動再起動
+  _autoRestartScanner() {
+    if (!this._cameraMode) return;
+    this._cameraMode = false;
+    if (this.currentTab !== "scan" || this.scannerStarted) return;
+    setTimeout(() => {
+      if (this.currentTab === "scan" && !this.scannerStarted) {
+        this.startScanner();
+      }
+    }, 800);
   },
 
   async manualSearch() {
@@ -439,6 +453,13 @@ const App = {
             ※ QRコードの内容がUTNO1・品番・伝票番号と一致しない場合は手動入力をお試しください
           </div>
         </div></div>`;
+      // カメラスキャン由来の場合は2秒後に自動再起動
+      if (this._cameraMode) {
+        setTimeout(() => {
+          document.getElementById("scan-result-area").innerHTML = "";
+          this._autoRestartScanner();
+        }, 2000);
+      }
     }
   },
 
@@ -488,6 +509,7 @@ const App = {
     });
     document.getElementById("ship-cancel-btn").addEventListener("click", () => {
       document.getElementById("scan-result-area").innerHTML = "";
+      this._autoRestartScanner();
     });
   },
 
@@ -509,9 +531,10 @@ const App = {
       // 一覧データも更新
       const item = this.listData.find((x) => x.denno === data.denno);
       if (item) item.status = "出荷済";
-      // 3秒後に結果エリアをクリアして次のスキャン待機
+      // 3秒後に結果エリアをクリアして次のスキャン待機（カメラ自動再起動）
       setTimeout(() => {
         document.getElementById("scan-result-area").innerHTML = "";
+        this._autoRestartScanner();
       }, 3000);
     } catch (e) {
       this.showToast("出荷更新失敗: " + e.message, "error");
