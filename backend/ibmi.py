@@ -42,6 +42,7 @@ DESIRED_COLUMNS = [
     ("ORDER",  "order_flg", False),
     ("SLCRT",  "slcrt",     False),
     ("DTADD",  "dtadd",     False),
+    ("RJU1S",  "rju1s",     False),  # 受注ステータス: 'J'=受注残
 ]
 
 
@@ -98,10 +99,10 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
                 select_parts.append(col)
             used_columns.append(field)
 
-        # WHERE 句（URIAG が存在する場合のみ条件追加）
+        # WHERE 句（RJU1S が存在すれば受注ステータス='J'で受注残に絞る）
         where = "WHERE RJU1D <> '1'"
-        if "URIAG" in existing:
-            where += " AND URIAG <> '1'"
+        if "RJU1S" in existing:
+            where += " AND RJU1S = 'J'"
 
         query = (
             f"SELECT {', '.join(select_parts)} "

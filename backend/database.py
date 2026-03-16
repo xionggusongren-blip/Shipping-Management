@@ -45,6 +45,7 @@ class ShipmentCache(Base):
     order_flg = Column(String(1))
     slcrt = Column(Integer)
     dtadd = Column(String(20))
+    rju1s = Column(String(4))   # 受注ステータス ('J'=受注残)
     synced_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
@@ -93,3 +94,21 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # 既存DBへのカラム追加（ALTER TABLE）
+    _migrate_add_columns()
+
+
+def _migrate_add_columns():
+    """既存DBに不足カラムを追加する簡易マイグレーション"""
+    migrations = [
+        ("shipment_cache", "rju1s", "VARCHAR(4)"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in migrations:
+            try:
+                conn.execute(__import__("sqlalchemy").text(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
+                ))
+                conn.commit()
+            except Exception:
+                pass  # カラムが既に存在する場合はスキップ
