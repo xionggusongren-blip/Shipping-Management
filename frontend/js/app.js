@@ -100,6 +100,7 @@ const App = {
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
 
     // スキャン
+    document.getElementById("photo-input").addEventListener("change", (e) => this.photoScan(e));
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
     document.getElementById("stop-scan-btn").addEventListener("click", () => this.stopScanner());
     document.getElementById("manual-search-btn").addEventListener("click", () => this.manualSearch());
@@ -319,6 +320,32 @@ const App = {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
       })
       .catch((e) => this.showToast(e.message, "error"));
+  },
+
+  // ---- 写真撮影スキャン ----
+  async photoScan(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    // 同じファイルを再選択できるようリセット
+    e.target.value = "";
+
+    document.getElementById("scan-result-area").innerHTML =
+      `<div class="card"><div class="card-body">🔍 QRコードを解析中...</div></div>`;
+    try {
+      const html5qr = new Html5Qrcode("reader");
+      const result = await html5qr.scanFile(file, false);
+      await html5qr.clear();
+      Scanner.beep();
+      await this.handleScanResult(result);
+    } catch (err) {
+      document.getElementById("scan-result-area").innerHTML =
+        `<div class="card"><div class="card-body">
+          <div style="color:var(--danger)">❌ QRコードを検出できませんでした</div>
+          <div style="font-size:12px;margin-top:8px;color:var(--text-light)">
+            QRコード全体が写るよう撮影し直してください
+          </div>
+        </div></div>`;
+    }
   },
 
   // ---- スキャン ----

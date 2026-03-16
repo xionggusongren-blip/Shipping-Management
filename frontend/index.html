@@ -82,18 +82,29 @@
   <!-- スキャンタブ -->
   <div id="tab-scan" class="tab-pane">
     <div class="card">
-      <div class="card-header">📷 バーコード / QRスキャン</div>
+      <div class="card-header">📷 QRスキャン</div>
       <div class="card-body">
-        <div id="scanner-container">
-          <div id="reader"></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-          <button id="start-scan-btn" class="btn btn-primary">📷 カメラ起動</button>
-          <button id="stop-scan-btn" class="btn btn-danger" style="display:none">⏹ 停止</button>
-        </div>
+        <!-- 写真撮影方式（推奨） -->
+        <label id="photo-scan-btn" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:16px;padding:14px 20px;width:100%;justify-content:center;box-sizing:border-box">
+          📸 カメラで撮影してスキャン
+          <input type="file" accept="image/*" capture="environment" id="photo-input" style="display:none">
+        </label>
         <p style="color:var(--text-light);font-size:12px;margin-top:8px">
-          納品書のQRコードをスキャンすると出荷処理ができます
+          カメラアプリが起動します。納品書のQRコードを撮影してください。
         </p>
+        <!-- ライブカメラ（折りたたみ） -->
+        <details style="margin-top:12px">
+          <summary style="cursor:pointer;color:var(--text-light);font-size:13px">▶ ライブカメラを使う（上記で読めない場合）</summary>
+          <div style="margin-top:8px">
+            <div id="scanner-container">
+              <div id="reader"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+              <button id="start-scan-btn" class="btn btn-primary">📷 カメラ起動</button>
+              <button id="stop-scan-btn" class="btn btn-danger" style="display:none">⏹ 停止</button>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
 
