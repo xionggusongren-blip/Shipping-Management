@@ -47,7 +47,8 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可）...
-pip install --quiet -r backend\requirements-ibmi.txt 2>nul || echo [WARNING] IBM i ライブラリ未インストール（DEMO_MODE で動作します）
+pip install --quiet -r backend\requirements-ibmi.txt 2>nul
+python -c "import pyodbc; print('[OK] pyodbc', pyodbc.version)" 2>nul || echo [WARNING] pyodbc 未インストール - pip install pyodbc を実行してください
 
 REM ---------- SSL証明書の生成 ----------
 echo [INFO] SSL cert generating...
