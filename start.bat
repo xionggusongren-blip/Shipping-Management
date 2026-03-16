@@ -42,11 +42,11 @@ echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可�
 pip install --quiet -r backend\requirements-ibmi.txt 2>nul || echo [WARNING] IBM i ライブラリ未インストール（DEMO_MODE で動作します）
 
 REM ---------- SSL証明書の生成 ----------
-echo [INFO] SSL証明書を確認中...
+echo [INFO] SSL cert generating...
 cd backend
 python generate_cert.py
 if errorlevel 1 (
-    echo [WARNING] SSL証明書の生成に失敗しました。HTTPで起動します。
+    echo [WARNING] SSL cert failed. Starting HTTP mode.
     cd ..
     goto :start_http
 )
@@ -56,14 +56,15 @@ REM ---------- アプリ起動 (HTTPS) ----------
 :start_https
 echo.
 echo ======================================
-echo   アクセスURL
+echo   Access URL
 echo ======================================
-echo   PC:     https://localhost:8443
-echo   スマホ: https://(PCのIPアドレス):8443
-echo   ※ 初回アクセス時にブラウザの警告が出ます
-echo     「詳細設定」→「安全でないサイトへ進む」を選択してください
+echo   PC    : https://localhost:8443
+echo   PHONE : https://192.168.0.136:8443
+echo   NOTE  : Accept browser security warning on first access
+echo           Safari: [詳細を表示] then [このWebサイトを閲覧]
+echo           Chrome: [詳細設定] then [アクセスする]
 echo ======================================
-echo   停止するには Ctrl+C を押してください
+echo   Press Ctrl+C to stop
 echo.
 
 cd backend
@@ -72,8 +73,8 @@ goto :end
 
 REM ---------- アプリ起動 (HTTP フォールバック) ----------
 :start_http
-echo [INFO] http://localhost:8000 でアプリを起動します（カメラ機能は使用できません）
-echo        停止するには Ctrl+C を押してください
+echo [INFO] Starting HTTP mode on port 8000 (camera unavailable)
+echo        Press Ctrl+C to stop
 echo.
 
 cd backend

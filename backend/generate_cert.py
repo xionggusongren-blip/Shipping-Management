@@ -87,4 +87,6 @@ def generate_cert(cert_path="cert.pem", key_path="key.pem"):
 
 
 if __name__ == "__main__":
-    generate_cert()
+    import sys
+    ok = generate_cert()
+    sys.exit(0 if ok else 1)
