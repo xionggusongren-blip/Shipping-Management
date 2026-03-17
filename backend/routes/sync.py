@@ -38,9 +38,12 @@ def _do_sync(db: Session, triggered_by: str = "system") -> dict:
             if deleted:
                 logger.info(f"削除済みレコード: {deleted}件（IBM i から消えたもの）")
 
-        # INSERT / UPDATE
+        # INSERT / UPDATE（モデルに存在するカラムのみ渡す）
+        cache_cols = {c.name for c in ShipmentCache.__table__.columns}
         for row in valid_rows:
-            obj = ShipmentCache(**{**row, "synced_at": datetime.now()})
+            safe_row = {k: v for k, v in row.items() if k in cache_cols}
+            safe_row["synced_at"] = datetime.now()
+            obj = ShipmentCache(**safe_row)
             db.merge(obj)
 
         db.commit()

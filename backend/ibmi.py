@@ -98,28 +98,32 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         has_scod = all(c in staff_existing for c in ("SCOD1", "SCOD2", "SCOD3"))
         logger.info(f"{IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} SCOD1/2/3 存在: {has_scod}")
 
-        # 存在するカラムのみ SELECT に含める（RJU1 側）
+        # SQLカラム名 → アプリフィールド名 のマッピング辞書
+        sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
+        sql_to_field["TANTO"] = "tanto"  # JOIN由来のエイリアス
+
+        # 存在するカラムのみ SELECT に含める（R. プレフィックス + 明示的 AS エイリアス）
         select_parts = []
-        used_columns = []
         for col, field, needs_cast in DESIRED_COLUMNS:
             if col not in existing:
                 logger.debug(f"カラム {col} は存在しないためスキップ")
                 continue
             if needs_cast:
-                select_parts.append(f"CAST(R.{col} AS VARGRAPHIC(60) CCSID 1200) AS {col}")
+                select_parts.append(
+                    f"CAST(R.{col} AS VARGRAPHIC(60) CCSID 1200) AS {col}"
+                )
             else:
-                select_parts.append(f"R.{col}")
-            used_columns.append(field)
+                select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
 
         # 担当者コード: MUS1.TREED の SCOD1+SCOD2+SCOD3 を連結
         if has_scod and "UCOD" in existing:
+            # SCOD が文字列・数値どちらでも動くよう CHAR() で文字化してから TRIM
             scod_expr = (
-                "TRIM(COALESCE(M.SCOD1,'')) || "
-                "TRIM(COALESCE(M.SCOD2,'')) || "
-                "TRIM(COALESCE(M.SCOD3,''))"
+                "TRIM(CHAR(COALESCE(M.SCOD1,''))) || "
+                "TRIM(CHAR(COALESCE(M.SCOD2,''))) || "
+                "TRIM(CHAR(COALESCE(M.SCOD3,'')))"
             )
             select_parts.append(f"{scod_expr} AS TANTO")
-            used_columns.append("tanto")
             join_clause = (
                 f"LEFT JOIN {IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} M "
                 f"ON R.UCOD = M.UCOD"
@@ -127,8 +131,7 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         else:
             # フォールバック: RJU1.TANTO を使用
             if "TANTO" in existing:
-                select_parts.append("R.TANTO")
-                used_columns.append("tanto")
+                select_parts.append("R.TANTO AS TANTO")
             join_clause = ""
 
         # WHERE 句（RJU1S が存在すれば受注ステータス='J'で受注残に絞る）
@@ -143,9 +146,12 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             f"{where} "
             f"ORDER BY R.NODAYU, R.DENNO"
         )
-        logger.info(f"実行クエリ: {query[:200]}...")
+        logger.info(f"実行クエリ: {query[:300]}...")
 
         cursor.execute(query)
+        # cursor.description から実際に返ったカラム名を取得（位置ずれを防ぐ）
+        result_cols = [desc[0].upper() for desc in cursor.description]
+        logger.info(f"返却カラム: {result_cols}")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -156,7 +162,11 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
     int_fields = {"denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"}
     result = []
     for row in rows:
-        record = dict(zip(used_columns, row))
+        # cursor.description のカラム名でマッピング（位置ベースではなく名前ベース）
+        record = {}
+        for col_name, value in zip(result_cols, row):
+            field = sql_to_field.get(col_name, col_name.lower())
+            record[field] = value
         for key in int_fields:
             if key in record and record[key] is not None:
                 try:
