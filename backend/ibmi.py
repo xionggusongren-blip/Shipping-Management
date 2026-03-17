@@ -136,12 +136,32 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         else:
             join_clause = ""
 
-        # WHERE 句: 受注残のみ取得（売上済み・削除済みを除外）
+        # RJPRT テーブルが存在するか確認（受注プリント = 有効な受注残の証明）
+        cursor.execute(
+            "SELECT COUNT(*) FROM QSYS2.SYSTABLES "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'RJPRT'",
+            (IBMI_LIBRARY,)
+        )
+        has_rjprt = cursor.fetchone()[0] > 0
+        logger.info(f"{IBMI_LIBRARY}.RJPRT 存在: {has_rjprt}")
+
+        # WHERE 句: 受注残のみ取得（削除済み除外）
         where = "WHERE R.RJU1D <> '1'"        # 削除フラグ除外
         if "RJU1S" in existing:
             where += " AND R.RJU1S = 'J'"     # 受注残のみ
-        if "URIAG" in existing:
-            where += " AND R.URIAG <> '1'"    # 売上済み除外
+
+        # RJPRT に存在するレコードのみ = 有効な受注残
+        if has_rjprt:
+            where += (
+                f" AND EXISTS ("
+                f"SELECT 1 FROM {IBMI_LIBRARY}.RJPRT P "
+                f"WHERE P.DENNO = R.DENNO)"
+            )
+            logger.info("RJPRT EXISTS フィルタを適用")
+        else:
+            # RJPRT がなければ URIAG で代替除外
+            if "URIAG" in existing:
+                where += " AND R.URIAG <> '1'"
 
         query = (
             f"SELECT {', '.join(select_parts)} "
