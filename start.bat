@@ -28,11 +28,18 @@ if not exist "backend\.env" (
 )
 
 REM ---------- 最新コードを取得 ----------
-echo [INFO] 最新コードを取得中 (git pull)...
-git pull
+echo [INFO] 最新コードを取得中...
+git fetch origin
+if errorlevel 1 (
+    echo [WARNING] git fetch に失敗しました。現在のコードで起動します。
+    goto :skip_pull
+)
+git checkout claude/create-from-requirements-bqqkU
+git pull origin claude/create-from-requirements-bqqkU
 if errorlevel 1 (
     echo [WARNING] git pull に失敗しました。現在のコードで起動します。
 )
+:skip_pull
 echo.
 
 REM ---------- 仮想環境の有効化 ----------

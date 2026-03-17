@@ -22,7 +22,7 @@ class ShipmentCache(Base):
     __tablename__ = "shipment_cache"
 
     denno = Column(Integer, primary_key=True, index=True)
-    tanto = Column(String(4))
+    tanto = Column(String(20))
     ucod = Column(Integer)
     hcod = Column(Integer)
     hname = Column(String(32))
