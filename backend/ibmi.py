@@ -103,22 +103,24 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # 社員名マスタ TREEM.MWK1 の全カラムを確認
+        # MUS1.WCOD → MWK1.WCOD で社員名を取得できるか確認
         has_wknm = False
-        mwk1_key_cols = []
         try:
             cursor.execute(
-                f"SELECT * FROM {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} "
-                f"FETCH FIRST 1 ROW ONLY"
+                f"SELECT M.SCOD1, M.SCOD2, M.SCOD3, M.WCOD, "
+                f"CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
+                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
+                f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON M.WCOD = N.WCOD "
+                f"WHERE M.SCOD1 = 'E' AND M.SCOD2 = '1' "
+                f"FETCH FIRST 3 ROWS ONLY"
             )
-            row0 = cursor.fetchone()
-            mwk1_all_cols = [desc[0].upper() for desc in cursor.description]
-            logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} 全カラム: {mwk1_all_cols}")
-            if row0:
-                sample = {col: repr(val) for col, val in zip(mwk1_all_cols, row0)}
-                logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} 先頭行: {sample}")
+            rows_check = cursor.fetchall()
+            has_wknm = True
+            logger.info(f"MUS1→MWK1(WCOD) JOIN確認OK:")
+            for r in rows_check:
+                logger.info(f"  SCOD={r[0]}{r[1]}{r[2]} WCOD={r[3]} WKNM=[{r[4]}]")
         except Exception as e:
-            logger.warning(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} アクセス失敗: {e}")
+            logger.warning(f"MUS1→MWK1 WCOD JOIN失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
