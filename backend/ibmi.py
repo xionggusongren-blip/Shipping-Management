@@ -103,20 +103,22 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # 社員名マスタ TREEM.MWK1 の WKNM アクセス確認
+        # 社員名マスタ TREEM.MWK1 の全カラムを確認
         has_wknm = False
+        mwk1_key_cols = []
         try:
             cursor.execute(
-                f"SELECT SCOD1, SCOD2, SCOD3, "
-                f"CAST(WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
-                f"FROM {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} "
+                f"SELECT * FROM {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} "
                 f"FETCH FIRST 1 ROW ONLY"
             )
             row0 = cursor.fetchone()
-            has_wknm = True
-            logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE}: WKNM 確認OK  先頭行SCOD=[{row0[0]}{row0[1]}{row0[2]}] WKNM=[{row0[3]}]")
+            mwk1_all_cols = [desc[0].upper() for desc in cursor.description]
+            logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} 全カラム: {mwk1_all_cols}")
+            if row0:
+                sample = {col: repr(val) for col, val in zip(mwk1_all_cols, row0)}
+                logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} 先頭行: {sample}")
         except Exception as e:
-            logger.warning(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} WKNM アクセス失敗: {e}")
+            logger.warning(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} アクセス失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
