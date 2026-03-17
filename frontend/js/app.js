@@ -117,8 +117,9 @@ const App = {
     });
     document.getElementById("save-status-btn").addEventListener("click", () => this.saveStatus());
 
-    // 荷札印刷
+    // 荷札印刷 / 明細印刷
     document.getElementById("print-label-btn").addEventListener("click", () => this.printLabel());
+    document.getElementById("print-meisai-btn").addEventListener("click", () => this.printMeisai());
 
     // スキャン
     document.getElementById("start-scan-btn").addEventListener("click", () => this.startScanner());
@@ -331,12 +332,23 @@ const App = {
     if (!this.currentDetail) return;
     const url = `${window.location.origin}/api/shipments/${this.currentDetail.denno}/label`;
     const token = Api.getToken();
-    // トークン付きでPDFを開く
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => {
         if (!res.ok) throw new Error("PDF生成に失敗しました");
         return res.blob();
       })
+      .then((blob) => {
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, "_blank");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      })
+      .catch((e) => this.showToast(e.message, "error"));
+  },
+
+  printMeisai(denno) {
+    const d = denno || this.currentDetail?.denno;
+    if (!d) return;
+    Api.getMeisai(d)
       .then((blob) => {
         const blobUrl = URL.createObjectURL(blob);
         window.open(blobUrl, "_blank");
@@ -486,34 +498,42 @@ const App = {
 
   _showShipConfirm(data) {
     const alreadyShipped = data.status === "出荷済" || data.status === "納品完了";
-    const statusHtml = alreadyShipped
+    const statusBadge = `<span class="badge badge-${esc(data.status || "未処理")}" style="font-size:13px">${esc(data.status || "未処理")}</span>`;
+    const statusWarn = alreadyShipped
       ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:13px">
            ⚠️ この伝票はすでに「${esc(data.status)}」です
          </div>`
       : "";
+    const utno1Row = data.utno1
+      ? `<tr><td style="color:var(--text-light);padding:4px 0;width:6em">送り状番号</td><td style="padding:4px 0"><strong>${esc(data.utno1)}</strong></td></tr>`
+      : "";
 
     document.getElementById("scan-result-area").innerHTML =
       `<div class="card" style="border:2px solid var(--primary)">
-        <div class="card-header" style="background:var(--primary);color:#fff">
-          📦 出荷確認
+        <div class="card-header" style="background:var(--primary);color:#fff;display:flex;justify-content:space-between;align-items:center">
+          <span>📦 検索結果</span>${statusBadge}
         </div>
         <div class="card-body">
-          ${statusHtml}
+          ${statusWarn}
           <table style="width:100%;font-size:14px;border-collapse:collapse">
+            ${utno1Row}
             <tr><td style="color:var(--text-light);padding:4px 0;width:6em">伝票番号</td><td style="padding:4px 0"><strong>#${esc(String(data.denno))}</strong></td></tr>
             <tr><td style="color:var(--text-light);padding:4px 0">品名</td><td style="padding:4px 0">${esc(data.hname || "-")}</td></tr>
             <tr><td style="color:var(--text-light);padding:4px 0">出荷先</td><td style="padding:4px 0">${esc(data.synm1 || "-")}</td></tr>
             <tr><td style="color:var(--text-light);padding:4px 0">数量</td><td style="padding:4px 0">${esc(String(data.suryo || 0))}</td></tr>
             <tr><td style="color:var(--text-light);padding:4px 0">納期</td><td style="padding:4px 0">${esc(data.nodayu_str || "-")}</td></tr>
           </table>
-          <div style="display:flex;gap:8px;margin-top:16px">
-            <button id="ship-confirm-btn" class="btn btn-primary" style="flex:1;font-size:16px;padding:12px">
+          <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+            <button id="ship-confirm-btn" class="btn btn-primary" style="flex:1;font-size:15px;padding:10px">
               🚚 出荷する
             </button>
-            <button id="ship-detail-btn" class="btn" style="font-size:13px;padding:12px">
+            <button id="ship-meisai-btn" class="btn btn-outline" style="font-size:13px;padding:10px">
+              🖨️ 明細
+            </button>
+            <button id="ship-detail-btn" class="btn" style="font-size:13px;padding:10px">
               詳細
             </button>
-            <button id="ship-cancel-btn" class="btn btn-danger" style="font-size:13px;padding:12px">
+            <button id="ship-cancel-btn" class="btn btn-danger" style="font-size:13px;padding:10px">
               ✕
             </button>
           </div>
@@ -521,6 +541,7 @@ const App = {
       </div>`;
 
     document.getElementById("ship-confirm-btn").addEventListener("click", () => this._doShip(data));
+    document.getElementById("ship-meisai-btn").addEventListener("click", () => this.printMeisai(data.denno));
     document.getElementById("ship-detail-btn").addEventListener("click", () => {
       document.getElementById("scan-result-area").innerHTML = "";
       this.currentDetail = data;

@@ -109,6 +109,16 @@ const Api = {
     return `${API_BASE}/shipments/${denno}/label?token=${this.getToken()}`;
   },
 
+  getMeisai(denno) {
+    const token = this.getToken();
+    return fetch(`${API_BASE}/shipments/${denno}/meisai`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((res) => {
+      if (!res.ok) throw new Error("明細PDF生成に失敗しました");
+      return res.blob();
+    });
+  },
+
   health() {
     return this._fetch("/health");
   },
