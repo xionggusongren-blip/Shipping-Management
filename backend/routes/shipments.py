@@ -40,10 +40,14 @@ def get_tantos(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """担当者コード一覧を返す"""
+    """担当者コード一覧を返す（Z999除外）"""
     rows = (
         db.query(distinct(ShipmentCache.tanto))
-        .filter(ShipmentCache.tanto.isnot(None), ShipmentCache.tanto != "")
+        .filter(
+            ShipmentCache.tanto.isnot(None),
+            ShipmentCache.tanto != "",
+            ~ShipmentCache.tanto.like("Z999%"),
+        )
         .order_by(ShipmentCache.tanto)
         .all()
     )
@@ -63,10 +67,11 @@ def get_shipments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(ShipmentCache)
+    query = db.query(ShipmentCache).filter(~ShipmentCache.tanto.like("Z999%"))
 
     if tanto:
-        query = query.filter(ShipmentCache.tanto == tanto)
+        # tanto フィールドは「E102 山田太郎」形式のため前方一致で絞り込む
+        query = query.filter(ShipmentCache.tanto.like(f"{tanto}%"))
     if ucod:
         query = query.filter(ShipmentCache.ucod == ucod)
     if keyword:
@@ -75,6 +80,7 @@ def get_shipments(
                 ShipmentCache.hname.contains(keyword),
                 ShipmentCache.synm1.contains(keyword),
                 ShipmentCache.synm2.contains(keyword),
+                ShipmentCache.tanto.contains(keyword),
             )
         )
 

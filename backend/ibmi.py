@@ -173,8 +173,11 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             join_clause = ""
             logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
 
-        # WHERE 句: RJU1D=' '(未削除) AND RJU1S='J'(受注残) の2条件のみ
-        where = "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J'"
+        # WHERE 句: 未削除 AND 受注残 AND Z999除外
+        where = (
+            "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J' "
+            "AND NOT (M.SCOD1 = 'Z' AND M.SCOD2 = '9' AND M.SCOD3 = '99')"
+        )
 
         query = (
             f"SELECT {', '.join(select_parts)} "

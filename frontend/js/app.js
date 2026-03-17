@@ -40,7 +40,9 @@ const App = {
       while (sel.options.length > 1) sel.remove(1);
       tantos.forEach(({ tanto }) => {
         const opt = document.createElement("option");
-        opt.value = tanto;
+        // value はコード部分のみ（例: "E102"）、表示は "E102 山田太郎" 全体
+        const code = tanto.split(" ")[0];
+        opt.value = code;
         opt.textContent = tanto;
         sel.appendChild(opt);
       });
