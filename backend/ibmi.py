@@ -16,6 +16,7 @@ IBMI_PASSWORD      = os.getenv("IBMI_PASSWORD", "")
 IBMI_LIBRARY       = os.getenv("IBMI_LIBRARY", "TREED")
 IBMI_TABLE         = os.getenv("IBMI_TABLE", "RJU1")
 IBMI_STAFF_TABLE   = os.getenv("IBMI_STAFF_TABLE",   "MUS1")   # 担当者マスタ ファイル（TREEDライブラリ内）
+IBMI_BRIDGE_TABLE  = os.getenv("IBMI_BRIDGE_TABLE",  "MSL1")   # SCOD↔WCOD橋渡しテーブル
 IBMI_NAME_LIBRARY  = os.getenv("IBMI_NAME_LIBRARY",  "TREEM")  # 社員名マスタ ライブラリ
 IBMI_NAME_TABLE    = os.getenv("IBMI_NAME_TABLE",    "MWK1")   # 社員名マスタ ファイル（社員名カラム: WKNM）
 
@@ -103,24 +104,26 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # MUS1.WCOD → MWK1.WCOD で社員名を取得できるか確認
+        # MUS1.SCOD → MSL1.SCOD → MSL1.WCOD → MWK1.WCOD → WKNM の3テーブルJOIN検証
         has_wknm = False
         try:
             cursor.execute(
-                f"SELECT M.SCOD1, M.SCOD2, M.SCOD3, M.WCOD, "
+                f"SELECT M.SCOD1, M.SCOD2, M.SCOD3, S.WCOD, "
                 f"CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
                 f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
-                f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON M.WCOD = N.WCOD "
+                f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_BRIDGE_TABLE} S "
+                f"  ON M.SCOD1 = S.SCOD1 AND M.SCOD2 = S.SCOD2 AND M.SCOD3 = S.SCOD3 "
+                f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD "
                 f"WHERE M.SCOD1 = 'E' AND M.SCOD2 = '1' "
                 f"FETCH FIRST 3 ROWS ONLY"
             )
             rows_check = cursor.fetchall()
             has_wknm = True
-            logger.info(f"MUS1→MWK1(WCOD) JOIN確認OK:")
+            logger.info(f"MUS1→MSL1→MWK1 JOIN確認OK:")
             for r in rows_check:
                 logger.info(f"  SCOD={r[0]}{r[1]}{r[2]} WCOD={r[3]} WKNM=[{r[4]}]")
         except Exception as e:
-            logger.warning(f"MUS1→MWK1 WCOD JOIN失敗: {e}")
+            logger.warning(f"MUS1→MSL1→MWK1 JOIN失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
@@ -153,10 +156,11 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
                 )
                 join_clause = (
                     f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD "
-                    f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N "
-                    f"ON M.SCOD1 = N.SCOD1 AND M.SCOD2 = N.SCOD2 AND M.SCOD3 = N.SCOD3"
+                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_BRIDGE_TABLE} S "
+                    f"  ON M.SCOD1 = S.SCOD1 AND M.SCOD2 = S.SCOD2 AND M.SCOD3 = S.SCOD3 "
+                    f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD"
                 )
-                logger.info(f"担当者JOIN: MUS1+MWK1(WKNM) 担当者コード+社員名")
+                logger.info(f"担当者JOIN: MUS1→MSL1→MWK1(WKNM) 担当者コード+社員名")
             else:
                 tanto_expr = scod_expr
                 join_clause = (
