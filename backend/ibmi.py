@@ -138,10 +138,12 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
                 select_parts.append("R.TANTO AS TANTO")
             join_clause = ""
 
-        # WHERE 句（RJU1S が存在すれば受注ステータス='J'で受注残に絞る）
-        where = "WHERE R.RJU1D <> '1'"
+        # WHERE 句: 受注残のみ取得（売上済み・削除済みを除外）
+        where = "WHERE R.RJU1D <> '1'"        # 削除フラグ除外
         if "RJU1S" in existing:
-            where += " AND R.RJU1S = 'J'"
+            where += " AND R.RJU1S = 'J'"     # 受注残のみ
+        if "URIAG" in existing:
+            where += " AND R.URIAG <> '1'"    # 売上済み除外
 
         query = (
             f"SELECT {', '.join(select_parts)} "
