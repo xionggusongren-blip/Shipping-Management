@@ -18,22 +18,15 @@ def _do_sync(db: Session, triggered_by: str = "system") -> dict:
     try:
         rows = fetch_from_ibmi()
 
-        # IBM i から取得した denno セット（重複除去・売上済み除外）
+        # IBM i から取得した denno セット（重複除去）
         seen: set = set()
         valid_rows = []
-        skipped_uriag = 0
         for row in rows:
             denno = row.get("denno")
             if denno is None or denno in seen:
                 continue
-            # 売上済み(uriag='1')は除外（SQLフィルタの補完）
-            if str(row.get("uriag", "")).strip() == "1":
-                skipped_uriag += 1
-                continue
             seen.add(denno)
             valid_rows.append(row)
-        if skipped_uriag:
-            logger.info(f"売上済み除外: {skipped_uriag}件")
 
         # IBM i に存在しなくなったレコードを削除（受注残から外れたもの）
         if seen:
