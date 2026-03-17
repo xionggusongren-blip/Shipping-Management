@@ -16,7 +16,8 @@ IBMI_PASSWORD      = os.getenv("IBMI_PASSWORD", "")
 IBMI_LIBRARY       = os.getenv("IBMI_LIBRARY", "TREED")
 IBMI_TABLE         = os.getenv("IBMI_TABLE", "RJU1")
 IBMI_STAFF_TABLE   = os.getenv("IBMI_STAFF_TABLE",   "MUS1")   # 担当者マスタ ファイル（TREEDライブラリ内）
-IBMI_NAME_TABLE    = os.getenv("IBMI_NAME_TABLE",    "MWK1")   # 社員名マスタ ファイル（TREEDライブラリ内）
+IBMI_NAME_LIBRARY  = os.getenv("IBMI_NAME_LIBRARY",  "TREEM")  # 社員名マスタ ライブラリ
+IBMI_NAME_TABLE    = os.getenv("IBMI_NAME_TABLE",    "MWK1")   # 社員名マスタ ファイル（社員名カラム: WKNM）
 
 # 取得したいカラム: (IBMiカラム名, アプリ内フィールド名, Unicode変換が必要か)
 # ※ tanto はMUS1.TREEDとのJOINで取得するため DESIRED_COLUMNS には含めない
@@ -102,21 +103,20 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # 社員名マスタ TREED.MWK1 のカラム構成と先頭行を確認
-        mwk1_cols = []
+        # 社員名マスタ TREEM.MWK1 の WKNM アクセス確認
+        has_wknm = False
         try:
             cursor.execute(
-                f"SELECT * FROM {IBMI_LIBRARY}.{IBMI_NAME_TABLE} "
+                f"SELECT SCOD1, SCOD2, SCOD3, "
+                f"CAST(WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
+                f"FROM {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} "
                 f"FETCH FIRST 1 ROW ONLY"
             )
             row0 = cursor.fetchone()
-            mwk1_cols = [desc[0].upper() for desc in cursor.description]
-            logger.info(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} カラム一覧: {mwk1_cols}")
-            if row0:
-                sample_vals = {col: repr(val) for col, val in zip(mwk1_cols, row0)}
-                logger.info(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} 先頭行: {sample_vals}")
+            has_wknm = True
+            logger.info(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE}: WKNM 確認OK  先頭行SCOD=[{row0[0]}{row0[1]}{row0[2]}] WKNM=[{row0[3]}]")
         except Exception as e:
-            logger.warning(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} アクセス失敗: {e}")
+            logger.warning(f"{IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} WKNM アクセス失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
@@ -135,20 +135,32 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             else:
                 select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
 
-        # 担当者コード: TREED.MUS1 の SCOD1+SCOD2+SCOD3 を連結
+        # 担当者コード+社員名: MUS1(コード) LEFT JOIN MWK1(名前)
         if has_scod and "UCOD" in existing:
             scod_expr = (
                 "TRIM(COALESCE(CHAR(M.SCOD1),'')) || "
                 "TRIM(COALESCE(CHAR(M.SCOD2),'')) || "
                 "TRIM(COALESCE(CHAR(M.SCOD3),''))"
             )
-            select_parts.append(f"{scod_expr} AS TANTO")
+            if has_wknm:
+                tanto_expr = (
+                    f"{scod_expr} || ' ' || "
+                    f"TRIM(COALESCE(CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200),''))"
+                )
+                join_clause = (
+                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD "
+                    f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N "
+                    f"ON M.SCOD1 = N.SCOD1 AND M.SCOD2 = N.SCOD2 AND M.SCOD3 = N.SCOD3"
+                )
+                logger.info(f"担当者JOIN: MUS1+MWK1(WKNM) 担当者コード+社員名")
+            else:
+                tanto_expr = scod_expr
+                join_clause = (
+                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD"
+                )
+                logger.info(f"担当者JOIN: MUS1のみ（MWK1不可）")
+            select_parts.append(f"{tanto_expr} AS TANTO")
             sql_to_field["TANTO"] = "tanto"
-            join_clause = (
-                f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
-                f"ON R.UCOD = M.UCOD"
-            )
-            logger.info(f"担当者JOIN: LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} ON UCOD")
         else:
             join_clause = ""
             logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
