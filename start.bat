@@ -1,14 +1,30 @@
 @echo off
-setlocal enabledelayedexpansion
 chcp 65001 > nul
+
+REM スクリプトのあるフォルダをカレントに設定
+cd /d "%~dp0"
+
+REM =============================================================
+REM  git pull で自分自身が書き換わっても安全なように、
+REM  更新済みフラグ(_UPDATED)がない場合のみ更新 → 新プロセスで再起動
+REM =============================================================
+if "%_UPDATED%"=="" (
+    echo [INFO] 最新コードを取得中...
+    git fetch origin 2>nul
+    git checkout claude/create-from-requirements-bqqkU 2>nul
+    git pull origin claude/create-from-requirements-bqqkU 2>nul
+    set _UPDATED=1
+    cmd /c "%~f0"
+    exit /b
+)
+
+REM ここから下は更新済みの新しいコードで実行される
+setlocal enabledelayedexpansion
 
 echo ======================================
 echo   荷物管理Webアプリ 起動
 echo ======================================
 echo.
-
-REM スクリプトのあるフォルダをカレントに設定
-cd /d "%~dp0"
 
 REM ---------- セットアップ確認 ----------
 if not exist ".venv" (
@@ -26,21 +42,6 @@ if not exist "backend\.env" (
     pause
     exit /b 1
 )
-
-REM ---------- 最新コードを取得 ----------
-echo [INFO] 最新コードを取得中...
-git fetch origin
-if errorlevel 1 (
-    echo [WARNING] git fetch に失敗しました。現在のコードで起動します。
-    goto :skip_pull
-)
-git checkout claude/create-from-requirements-bqqkU
-git pull origin claude/create-from-requirements-bqqkU
-if errorlevel 1 (
-    echo [WARNING] git pull に失敗しました。現在のコードで起動します。
-)
-:skip_pull
-echo.
 
 REM ---------- 仮想環境の有効化 ----------
 call .venv\Scripts\activate.bat
