@@ -10,16 +10,18 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
-IBMI_HOST     = os.getenv("IBMI_HOST", "192.168.3.230")
-IBMI_USER     = os.getenv("IBMI_USER", "")
-IBMI_PASSWORD = os.getenv("IBMI_PASSWORD", "")
-IBMI_LIBRARY  = os.getenv("IBMI_LIBRARY", "TREED")
-IBMI_TABLE    = os.getenv("IBMI_TABLE", "RJU1")
+IBMI_HOST          = os.getenv("IBMI_HOST", "192.168.3.230")
+IBMI_USER          = os.getenv("IBMI_USER", "")
+IBMI_PASSWORD      = os.getenv("IBMI_PASSWORD", "")
+IBMI_LIBRARY       = os.getenv("IBMI_LIBRARY", "TREED")
+IBMI_TABLE         = os.getenv("IBMI_TABLE", "RJU1")
+IBMI_STAFF_LIBRARY = os.getenv("IBMI_STAFF_LIBRARY", "MUS1")   # 担当者マスタ ライブラリ
+IBMI_STAFF_TABLE   = os.getenv("IBMI_STAFF_TABLE",   "TREED")  # 担当者マスタ ファイル
 
 # 取得したいカラム: (IBMiカラム名, アプリ内フィールド名, Unicode変換が必要か)
+# ※ tanto はMUS1.TREEDとのJOINで取得するため DESIRED_COLUMNS には含めない
 DESIRED_COLUMNS = [
     ("DENNO",  "denno",     False),
-    ("TANTO",  "tanto",     False),
     ("UCOD",   "ucod",      False),
     ("HCOD",   "hcod",      False),
     ("HNAME",  "hname",     True),
@@ -69,7 +71,7 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         f"SYSTEM={IBMI_HOST};"
         f"UID={IBMI_USER};"
         f"PWD={IBMI_PASSWORD};"
-        f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
+        f"DBQ=QGPL TREEW {IBMI_LIBRARY} {IBMI_STAFF_LIBRARY};"
         f"UNICODESQL=1"
     )
 
@@ -77,7 +79,7 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         conn = pyodbc.connect(conn_str, timeout=30)
         cursor = conn.cursor()
 
-        # テーブルに存在するカラムを確認
+        # RJU1 に存在するカラムを確認
         cursor.execute(
             "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
             "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
@@ -86,31 +88,62 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         existing = {row[0].upper() for row in cursor.fetchall()}
         logger.info(f"RJU1 カラム数: {len(existing)}")
 
-        # 存在するカラムのみ SELECT に含める
+        # 担当者マスタ(MUS1.TREED)にSCOD1/SCOD2/SCOD3が存在するか確認
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            (IBMI_STAFF_LIBRARY, IBMI_STAFF_TABLE)
+        )
+        staff_existing = {row[0].upper() for row in cursor.fetchall()}
+        has_scod = all(c in staff_existing for c in ("SCOD1", "SCOD2", "SCOD3"))
+        logger.info(f"{IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} SCOD1/2/3 存在: {has_scod}")
+
+        # 存在するカラムのみ SELECT に含める（RJU1 側）
         select_parts = []
-        used_columns = []  # (アプリ内フィールド名,)
+        used_columns = []
         for col, field, needs_cast in DESIRED_COLUMNS:
             if col not in existing:
                 logger.debug(f"カラム {col} は存在しないためスキップ")
                 continue
             if needs_cast:
-                select_parts.append(f"CAST({col} AS VARGRAPHIC(60) CCSID 1200) AS {col}")
+                select_parts.append(f"CAST(R.{col} AS VARGRAPHIC(60) CCSID 1200) AS {col}")
             else:
-                select_parts.append(col)
+                select_parts.append(f"R.{col}")
             used_columns.append(field)
 
+        # 担当者コード: MUS1.TREED の SCOD1+SCOD2+SCOD3 を連結
+        if has_scod and "UCOD" in existing:
+            scod_expr = (
+                "TRIM(COALESCE(M.SCOD1,'')) || "
+                "TRIM(COALESCE(M.SCOD2,'')) || "
+                "TRIM(COALESCE(M.SCOD3,''))"
+            )
+            select_parts.append(f"{scod_expr} AS TANTO")
+            used_columns.append("tanto")
+            join_clause = (
+                f"LEFT JOIN {IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} M "
+                f"ON R.UCOD = M.UCOD"
+            )
+        else:
+            # フォールバック: RJU1.TANTO を使用
+            if "TANTO" in existing:
+                select_parts.append("R.TANTO")
+                used_columns.append("tanto")
+            join_clause = ""
+
         # WHERE 句（RJU1S が存在すれば受注ステータス='J'で受注残に絞る）
-        where = "WHERE RJU1D <> '1'"
+        where = "WHERE R.RJU1D <> '1'"
         if "RJU1S" in existing:
-            where += " AND RJU1S = 'J'"
+            where += " AND R.RJU1S = 'J'"
 
         query = (
             f"SELECT {', '.join(select_parts)} "
-            f"FROM {IBMI_LIBRARY}.{IBMI_TABLE} "
+            f"FROM {IBMI_LIBRARY}.{IBMI_TABLE} R "
+            f"{join_clause} "
             f"{where} "
-            f"ORDER BY NODAYU, DENNO"
+            f"ORDER BY R.NODAYU, R.DENNO"
         )
-        logger.info(f"実行クエリ: {query[:120]}...")
+        logger.info(f"実行クエリ: {query[:200]}...")
 
         cursor.execute(query)
         rows = cursor.fetchall()
