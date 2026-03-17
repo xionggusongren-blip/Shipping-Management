@@ -39,6 +39,7 @@ DESIRED_COLUMNS = [
     ("ADR1T",  "adr1t",     False),
     ("ADR2T",  "adr2t",     False),
     ("UTNO1",  "utno1",     False),
+    ("OTANT",  "tanto",      False),  # 担当者コード (RJU1.OTANT)
     ("JUCHU",  "juchu",     False),
     ("URIAG",  "uriag",     False),
     ("ORDER",  "order_flg", False),
@@ -119,23 +120,20 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             else:
                 select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
 
-        # 担当者コード: MUS1.TREED の SCOD1+SCOD2+SCOD3 を連結
+        # 担当者コード: OTANT が DESIRED_COLUMNS で取得済みのため JOIN 不要
+        # MUS1.TREED が利用可能かつ SCOD1/2/3 が存在する場合のみ JOIN で上書き
         if has_scod and "UCOD" in existing:
-            # SCOD が文字列・数値どちらでも動くよう CHAR() で文字化してから TRIM
             scod_expr = (
                 "TRIM(CHAR(COALESCE(M.SCOD1,''))) || "
                 "TRIM(CHAR(COALESCE(M.SCOD2,''))) || "
                 "TRIM(CHAR(COALESCE(M.SCOD3,'')))"
             )
-            select_parts.append(f"{scod_expr} AS TANTO")
+            select_parts.append(f"{scod_expr} AS OTANT")  # OTANT エイリアスで上書き
             join_clause = (
                 f"LEFT JOIN {IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} M "
                 f"ON R.UCOD = M.UCOD"
             )
         else:
-            # フォールバック: RJU1.TANTO を使用
-            if "TANTO" in existing:
-                select_parts.append("R.TANTO AS TANTO")
             join_clause = ""
 
         # WHERE 句: 受注残のみ取得（売上済み・削除済みを除外）
@@ -184,6 +182,9 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
                 record[key] = record[key].strip()
         result.append(record)
 
+    # URIAG の実際の値を確認（売上済みフィルタの特定用）
+    uriag_samples = list({str(r.get("uriag", "")) for r in result[:200]})[:10]
+    logger.info(f"URIAG サンプル値: {uriag_samples}")
     logger.info(f"IBM i から {len(result)} 件取得しました")
     return result
 
