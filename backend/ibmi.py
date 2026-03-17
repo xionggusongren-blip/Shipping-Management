@@ -87,15 +87,19 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         existing = {row[0].upper() for row in cursor.fetchall()}
         logger.info(f"RJU1 カラム数: {len(existing)}")
 
-        # 担当者マスタ TREED.MUS1 の SCOD1/SCOD2/SCOD3 確認
-        cursor.execute(
-            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
-            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-            (IBMI_LIBRARY, IBMI_STAFF_TABLE)
-        )
-        staff_cols = {row[0].upper() for row in cursor.fetchall()}
-        has_scod = all(c in staff_cols for c in ("SCOD1", "SCOD2", "SCOD3", "UCOD"))
-        logger.info(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} カラム数={len(staff_cols)} SCOD+UCOD={has_scod}")
+        # 担当者マスタ TREED.MUS1 から直接1行取得して存在・カラムを確認
+        has_scod = False
+        try:
+            cursor.execute(
+                f"SELECT SCOD1, SCOD2, SCOD3, UCOD "
+                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
+                f"FETCH FIRST 1 ROW ONLY"
+            )
+            cursor.fetchall()
+            has_scod = True
+            logger.info(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE}: SCOD1/2/3+UCOD 確認OK")
+        except Exception as e:
+            logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
