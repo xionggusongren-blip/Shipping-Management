@@ -73,6 +73,15 @@ class User(Base):
     is_active = Column(Integer, default=1)
 
 
+class CustomerCache(Base):
+    """得意先マスタキャッシュ（MUS1から取得）"""
+    __tablename__ = "customer_cache"
+
+    ucod = Column(Integer, primary_key=True, index=True)
+    uname = Column(String(60))   # 得意先名
+    synced_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class SyncLog(Base):
     """同期ログ"""
     __tablename__ = "sync_log"
@@ -102,6 +111,7 @@ def _migrate_add_columns():
     """既存DBに不足カラムを追加する簡易マイグレーション"""
     migrations = [
         ("shipment_cache", "rju1s", "VARCHAR(4)"),
+        ("customer_cache", "uname", "VARCHAR(60)"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in migrations:

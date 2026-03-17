@@ -28,7 +28,25 @@ const App = {
     if (user.role === "admin") {
       document.getElementById("nav-admin").style.display = "flex";
     }
-    await Promise.all([this.loadTantos(), this.loadShipments()]);
+    await Promise.all([this.loadTantos(), this.loadCustomers(), this.loadShipments()]);
+  },
+
+  async loadCustomers() {
+    try {
+      const customers = await Api.getCustomers();
+      const sel = document.getElementById("filter-ucod");
+      const current = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      customers.forEach(({ ucod, uname }) => {
+        const opt = document.createElement("option");
+        opt.value = ucod;
+        opt.textContent = uname || String(ucod);
+        sel.appendChild(opt);
+      });
+      if (current) sel.value = current;
+    } catch (e) {
+      console.warn("得意先一覧の取得失敗:", e);
+    }
   },
 
   async loadTantos() {
@@ -109,6 +127,7 @@ const App = {
     });
     document.getElementById("filter-status").addEventListener("change", () => this.loadShipments());
     document.getElementById("filter-tanto").addEventListener("change", () => this.loadShipments());
+    document.getElementById("filter-ucod").addEventListener("change", () => this.loadShipments());
 
     // ステータス更新ボタン
     document.querySelectorAll(".status-btn").forEach((btn) => {
@@ -170,11 +189,12 @@ const App = {
     const keyword = document.getElementById("search-keyword").value.trim();
     const status = document.getElementById("filter-status").value;
     const tanto = document.getElementById("filter-tanto").value;
+    const ucod = document.getElementById("filter-ucod").value;
     const user = Api.getUser();
 
     const params = { keyword, status };
-    // 担当者フィルター: 管理者以外は自分の担当のみ（初期値）
     if (tanto) params.tanto = tanto;
+    if (ucod) params.ucod = ucod;
 
     this.showLoading(true);
     try {

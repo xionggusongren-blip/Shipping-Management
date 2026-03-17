@@ -173,11 +173,14 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             join_clause = ""
             logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
 
-        # WHERE 句: 未削除 AND 受注残 AND Z999除外
-        where = (
-            "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J' "
-            "AND NOT (M.SCOD1 = 'Z' AND M.SCOD2 = '9' AND M.SCOD3 = '99')"
-        )
+        # WHERE 句: 未削除 AND 受注残 AND Z999除外（MUS1がJOINされている場合のみSCOD条件）
+        if has_scod:
+            where = (
+                "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J' "
+                "AND NOT (M.SCOD1 = 'Z' AND M.SCOD2 = '9' AND M.SCOD3 = '99')"
+            )
+        else:
+            where = "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J'"
 
         query = (
             f"SELECT {', '.join(select_parts)} "
@@ -227,6 +230,91 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         logger.info(f"OTANT(tanto) サンプル値: {tanto_vals}")
     logger.info(f"IBM i から {len(result)} 件取得しました")
     return result
+
+
+def fetch_customers_from_ibmi() -> List[Dict[str, Any]]:
+    """TREED.MUS1 から得意先コード+得意先名を取得する"""
+    if not (IBMI_HOST and IBMI_USER and IBMI_PASSWORD):
+        logger.info("DEMO MODE: 得意先マスタはデモデータを返します")
+        return _get_demo_customers()
+
+    try:
+        import pyodbc
+    except ImportError:
+        return []
+
+    conn_str = (
+        f"DRIVER={{IBM i Access ODBC Driver}};"
+        f"SYSTEM={IBMI_HOST};"
+        f"UID={IBMI_USER};"
+        f"PWD={IBMI_PASSWORD};"
+        f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
+        f"UNICODESQL=1"
+    )
+    try:
+        conn = pyodbc.connect(conn_str, timeout=30)
+        cursor = conn.cursor()
+
+        # MUS1 の全カラムを確認して得意先名カラムを特定
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+            (IBMI_LIBRARY, IBMI_STAFF_TABLE)
+        )
+        all_cols = {row[0].upper() for row in cursor.fetchall()}
+        logger.info(f"MUS1 全カラム: {sorted(all_cols)}")
+
+        # 得意先名カラム候補（優先順位順）
+        name_candidates = ["UMNM1", "UMNMT", "UMNMK", "UNAM1", "UMNM2", "UNAME", "UNAMT"]
+        name_col = next((c for c in name_candidates if c in all_cols), None)
+
+        if name_col:
+            logger.info(f"得意先名カラム: {name_col}")
+            cursor.execute(
+                f"SELECT UCOD, CAST({name_col} AS VARGRAPHIC(60) CCSID 1200) AS UNAME "
+                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
+                f"WHERE UCOD IS NOT NULL "
+                f"AND NOT (SCOD1 = 'Z' AND SCOD2 = '9' AND SCOD3 = '99') "
+                f"GROUP BY UCOD, {name_col} "
+                f"ORDER BY UCOD"
+            )
+        else:
+            # 名前カラムが見つからない場合は UCOD のみ
+            logger.warning("MUS1 に得意先名カラムが見つかりません。UCODのみ取得します")
+            cursor.execute(
+                f"SELECT DISTINCT UCOD, '' AS UNAME "
+                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
+                f"WHERE UCOD IS NOT NULL "
+                f"AND NOT (SCOD1 = 'Z' AND SCOD2 = '9' AND SCOD3 = '99') "
+                f"ORDER BY UCOD"
+            )
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        result = []
+        for row in rows:
+            ucod = row[0]
+            uname = (row[1] or "").strip() if row[1] else ""
+            if ucod:
+                result.append({"ucod": int(ucod), "uname": uname})
+        logger.info(f"得意先マスタ: {len(result)}件取得")
+        return result
+
+    except Exception as e:
+        logger.error(f"得意先マスタ取得エラー: {e}")
+        return []
+
+
+def _get_demo_customers() -> List[Dict[str, Any]]:
+    return [
+        {"ucod": 100001, "uname": "株式会社東京商事"},
+        {"ucod": 100002, "uname": "大阪精密工業株式会社"},
+        {"ucod": 100003, "uname": "名古屋自動車部品株式会社"},
+        {"ucod": 100004, "uname": "福岡重工業株式会社"},
+        {"ucod": 100005, "uname": "仙台機械設備株式会社"},
+    ]
 
 
 def _get_demo_data() -> List[Dict[str, Any]]:

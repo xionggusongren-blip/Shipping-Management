@@ -71,6 +71,10 @@ const Api = {
     return this._fetch("/tantos");
   },
 
+  getCustomers() {
+    return this._fetch("/customers");
+  },
+
   getShipments(params = {}) {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => { if (v) q.set(k, v); });

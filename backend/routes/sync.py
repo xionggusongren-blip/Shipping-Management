@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
 
-from database import get_db, ShipmentCache, SyncLog
-from ibmi import fetch_from_ibmi
+from database import get_db, ShipmentCache, CustomerCache, SyncLog
+from ibmi import fetch_from_ibmi, fetch_customers_from_ibmi
 from auth import require_admin, get_current_user, User
 
 router = APIRouter()
@@ -48,6 +48,16 @@ def _do_sync(db: Session, triggered_by: str = "system") -> dict:
 
         db.commit()
         count = len(valid_rows)
+
+        # 得意先マスタを同期
+        try:
+            customers = fetch_customers_from_ibmi()
+            for c in customers:
+                db.merge(CustomerCache(ucod=c["ucod"], uname=c["uname"], synced_at=datetime.now()))
+            db.commit()
+            logger.info(f"得意先マスタ同期: {len(customers)}件")
+        except Exception as ce:
+            logger.warning(f"得意先マスタ同期失敗（メイン同期は継続）: {ce}")
 
         log = SyncLog(
             synced_at=started_at,

@@ -5,7 +5,7 @@ from sqlalchemy import or_, distinct
 from typing import Optional, List
 from datetime import datetime
 
-from database import get_db, ShipmentCache, ShipmentStatus
+from database import get_db, ShipmentCache, ShipmentStatus, CustomerCache
 from models import ShipmentListItem, ShipmentResponse, StatusUpdate, ibmi_date_to_str
 from auth import get_current_user, User
 
@@ -35,6 +35,30 @@ def _auto_status(cache: ShipmentCache) -> str:
     return "未処理"
 
 
+@router.get("/customers")
+def get_customers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """得意先一覧を返す（customer_cache → なければ shipment_cache の SYNM1 を使用）"""
+    rows = db.query(CustomerCache).order_by(CustomerCache.ucod).all()
+    if rows:
+        return [{"ucod": r.ucod, "uname": r.uname or str(r.ucod)} for r in rows]
+    # フォールバック: 荷物キャッシュの出荷先名を使用
+    pairs = (
+        db.query(ShipmentCache.ucod, ShipmentCache.synm1)
+        .filter(ShipmentCache.ucod.isnot(None), ~ShipmentCache.tanto.like("Z999%"))
+        .distinct()
+        .order_by(ShipmentCache.ucod)
+        .all()
+    )
+    seen = {}
+    for ucod, synm1 in pairs:
+        if ucod and ucod not in seen:
+            seen[ucod] = (synm1 or "").strip()
+    return [{"ucod": k, "uname": v or str(k)} for k, v in seen.items()]
+
+
 @router.get("/tantos")
 def get_tantos(
     db: Session = Depends(get_db),
@@ -57,7 +81,7 @@ def get_tantos(
 @router.get("/shipments", response_model=List[dict])
 def get_shipments(
     tanto: Optional[str] = Query(None, description="担当者コードで絞り込み"),
-    ucod: Optional[int] = Query(None, description="得意先コードで絞り込み"),
+    ucod: Optional[int] = Query(None, description="得意先コードで絞り込み（得意先フィルター）"),
     status: Optional[str] = Query(None, description="ステータスで絞り込み"),
     date_from: Optional[str] = Query(None, description="納期FROM (YYYY/MM/DD)"),
     date_to: Optional[str] = Query(None, description="納期TO (YYYY/MM/DD)"),
