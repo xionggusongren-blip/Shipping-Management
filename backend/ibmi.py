@@ -97,6 +97,10 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         staff_existing = {row[0].upper() for row in cursor.fetchall()}
         has_scod = all(c in staff_existing for c in ("SCOD1", "SCOD2", "SCOD3"))
         logger.info(f"{IBMI_STAFF_LIBRARY}.{IBMI_STAFF_TABLE} SCOD1/2/3 存在: {has_scod}")
+        if not has_scod:
+            # 担当者マスタのカラム一覧をログに出力（列名確認用）
+            scod_candidates = sorted(c for c in staff_existing if "COD" in c or "TAN" in c or "NM" in c or "NAME" in c)
+            logger.info(f"MUS1.TREED 担当者関連候補カラム: {scod_candidates[:30]}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}

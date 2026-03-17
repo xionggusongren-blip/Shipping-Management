@@ -1,15 +1,13 @@
 @echo off
 chcp 65001 > nul
 
-REM スクリプトのあるフォルダをカレントに設定
 cd /d "%~dp0"
 
-REM =============================================================
-REM  git pull で自分自身が書き換わっても安全なように、
-REM  更新済みフラグ(_UPDATED)がない場合のみ更新 → 新プロセスで再起動
-REM =============================================================
+REM -------------------------------------------------------
+REM  Safe self-update: fetch new code, then restart once
+REM -------------------------------------------------------
 if "%_UPDATED%"=="" (
-    echo [INFO] 最新コードを取得中...
+    echo [INFO] Fetching latest code...
     git fetch origin 2>nul
     git checkout claude/create-from-requirements-bqqkU 2>nul
     git pull origin claude/create-from-requirements-bqqkU 2>nul
@@ -18,7 +16,6 @@ if "%_UPDATED%"=="" (
     exit /b
 )
 
-REM ここから下は更新済みの新しいコードで実行される
 setlocal enabledelayedexpansion
 
 echo ======================================
@@ -26,7 +23,7 @@ echo   荷物管理Webアプリ 起動
 echo ======================================
 echo.
 
-REM ---------- セットアップ確認 ----------
+REM --- Setup check ---
 if not exist ".venv" (
     echo [ERROR] 仮想環境が見つかりません。先に install.bat を実行してください。
     pause
@@ -43,10 +40,10 @@ if not exist "backend\.env" (
     exit /b 1
 )
 
-REM ---------- 仮想環境の有効化 ----------
+REM --- Activate venv ---
 call .venv\Scripts\activate.bat
 
-REM ---------- 依存関係確認 ----------
+REM --- Install dependencies ---
 echo [INFO] 依存関係を確認中...
 pip install --quiet -r backend\requirements.txt
 if errorlevel 1 (
@@ -58,7 +55,7 @@ echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可�
 pip install --quiet -r backend\requirements-ibmi.txt 2>nul
 python -c "import pyodbc; print('[OK] pyodbc', pyodbc.version)" 2>nul || echo [WARNING] pyodbc 未インストール - pip install pyodbc を実行してください
 
-REM ---------- SSL証明書の生成 ----------
+REM --- Generate SSL cert ---
 echo [INFO] SSL cert generating...
 cd backend
 python generate_cert.py
@@ -69,7 +66,7 @@ if errorlevel 1 (
 )
 cd ..
 
-REM ---------- アプリ起動 (HTTPS) ----------
+REM --- Start app (HTTPS) ---
 :start_https
 echo.
 echo ======================================
@@ -88,7 +85,7 @@ cd backend
 uvicorn main:app --host 0.0.0.0 --port 8443 --ssl-keyfile key.pem --ssl-certfile cert.pem --reload
 goto :end
 
-REM ---------- アプリ起動 (HTTP フォールバック) ----------
+REM --- Start app (HTTP fallback) ---
 :start_http
 echo [INFO] Starting HTTP mode on port 8000 (camera unavailable)
 echo        Press Ctrl+C to stop
@@ -98,5 +95,4 @@ cd backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 :end
-
 pause
