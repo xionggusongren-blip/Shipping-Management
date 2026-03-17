@@ -110,6 +110,17 @@ def get_shipments(
 
     caches = query.order_by(ShipmentCache.nodayu, ShipmentCache.denno).all()
 
+    # 得意先名マップを作成
+    all_ucods = [c.ucod for c in caches if c.ucod]
+    customer_map: dict = {}
+    if all_ucods:
+        customer_rows = (
+            db.query(CustomerCache)
+            .filter(CustomerCache.ucod.in_(set(all_ucods)))
+            .all()
+        )
+        customer_map = {r.ucod: r.uname or "" for r in customer_rows}
+
     # ステータスをマージ
     status_map = {
         s.denno: s
@@ -130,6 +141,7 @@ def get_shipments(
             "denno": c.denno,
             "tanto": (c.tanto or "").strip(),
             "ucod": c.ucod,
+            "uname": customer_map.get(c.ucod, ""),
             "hname": c.hname,
             "synm1": c.synm1,
             "suryo": c.suryo,
@@ -154,7 +166,14 @@ def get_shipment_detail(
         raise HTTPException(status_code=404, detail="荷物が見つかりません")
 
     status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
-    return _build_response(cache, status_rec)
+    data = _build_response(cache, status_rec)
+    # 得意先名を追加
+    if cache.ucod:
+        cust = db.query(CustomerCache).filter(CustomerCache.ucod == cache.ucod).first()
+        data["uname"] = cust.uname if cust else ""
+    else:
+        data["uname"] = ""
+    return data
 
 
 @router.put("/shipments/{denno}/status")

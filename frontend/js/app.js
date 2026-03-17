@@ -246,6 +246,7 @@ const App = {
         <span class="badge badge-${item.status}">${item.status}</span>
       </div>
       <div class="shipment-row2">
+        ${item.uname ? `<span class="uname">🏢 ${esc(item.uname)}</span>` : ""}
         <span>📦 ${esc(item.synm1 || "-")}</span>
         <span>数量: ${item.suryo || 0}</span>
         <span class="${dateClass}">納期: ${nodayu}</span>
@@ -288,6 +289,7 @@ const App = {
       ["hcod", "品番", d.hcod],
       ["suryo", "数量", d.suryo],
       ["ucod", "得意先コード", d.ucod],
+      ["uname", "得意先名", d.uname || "-"],
       ["synm1", "出荷先", d.synm1 + (d.synm2 ? ` ${d.synm2}` : "")],
       ["adr1t", "住所", [d.adr1t, d.adr2t].filter(Boolean).join(" ")],
       ["nodayu_str", "得意先納期", d.nodayu_str || "-"],
@@ -614,7 +616,7 @@ const App = {
     try {
       const result = await Api.sync();
       this.showToast(`同期完了: ${result.record_count}件`, "success");
-      await this.loadShipments();
+      await Promise.all([this.loadCustomers(), this.loadTantos(), this.loadShipments()]);
     } catch (e) {
       this.showToast("同期失敗: " + e.message, "error");
     } finally {
