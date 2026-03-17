@@ -15,8 +15,7 @@ IBMI_USER          = os.getenv("IBMI_USER", "")
 IBMI_PASSWORD      = os.getenv("IBMI_PASSWORD", "")
 IBMI_LIBRARY       = os.getenv("IBMI_LIBRARY", "TREED")
 IBMI_TABLE         = os.getenv("IBMI_TABLE", "RJU1")
-IBMI_STAFF_LIBRARY = os.getenv("IBMI_STAFF_LIBRARY", "MUS1")   # 担当者マスタ ライブラリ
-IBMI_STAFF_TABLE   = os.getenv("IBMI_STAFF_TABLE",   "TREED")  # 担当者マスタ ファイル
+IBMI_STAFF_TABLE   = os.getenv("IBMI_STAFF_TABLE",   "MUS1")   # 担当者マスタ ファイル（TREEDライブラリ内）
 
 # 取得したいカラム: (IBMiカラム名, アプリ内フィールド名, Unicode変換が必要か)
 # ※ tanto はMUS1.TREEDとのJOINで取得するため DESIRED_COLUMNS には含めない
@@ -71,7 +70,7 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         f"SYSTEM={IBMI_HOST};"
         f"UID={IBMI_USER};"
         f"PWD={IBMI_PASSWORD};"
-        f"DBQ=QGPL TREEW {IBMI_LIBRARY} {IBMI_STAFF_LIBRARY};"
+        f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
         f"UNICODESQL=1"
     )
 
@@ -88,31 +87,15 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         existing = {row[0].upper() for row in cursor.fetchall()}
         logger.info(f"RJU1 カラム数: {len(existing)}")
 
-        # MUS1 ライブラリ内で SCOD1/SCOD2/SCOD3 と UCOD を持つテーブルを自動検索
-        staff_table = None
-        has_scod = False
+        # 担当者マスタ TREED.MUS1 の SCOD1/SCOD2/SCOD3 確認
         cursor.execute(
-            "SELECT TABLE_NAME, COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
-            "WHERE TABLE_SCHEMA = ? AND COLUMN_NAME IN ('SCOD1','SCOD2','SCOD3','UCOD') "
-            "ORDER BY TABLE_NAME",
-            (IBMI_STAFF_LIBRARY,)
+            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            (IBMI_LIBRARY, IBMI_STAFF_TABLE)
         )
-        # テーブルごとにカラムを集約
-        table_cols: dict = {}
-        for tname, cname in cursor.fetchall():
-            table_cols.setdefault(tname, set()).add(cname.upper())
-        logger.info(f"{IBMI_STAFF_LIBRARY} SCOD/UCOD保有テーブル: {dict({t: sorted(c) for t, c in table_cols.items()})}")
-
-        # SCOD1+SCOD2+SCOD3+UCOD を全て持つテーブルを採用
-        for tname, cols in table_cols.items():
-            if {"SCOD1", "SCOD2", "SCOD3", "UCOD"}.issubset(cols):
-                staff_table = tname
-                has_scod = True
-                logger.info(f"担当者マスタ決定: {IBMI_STAFF_LIBRARY}.{staff_table}")
-                break
-
-        if not has_scod:
-            logger.warning(f"{IBMI_STAFF_LIBRARY} に SCOD1/2/3+UCOD を持つテーブルが見つかりません")
+        staff_cols = {row[0].upper() for row in cursor.fetchall()}
+        has_scod = all(c in staff_cols for c in ("SCOD1", "SCOD2", "SCOD3", "UCOD"))
+        logger.info(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} カラム数={len(staff_cols)} SCOD+UCOD={has_scod}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
@@ -131,8 +114,8 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             else:
                 select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
 
-        # 担当者コード: MUS1 の SCOD1+SCOD2+SCOD3 を連結
-        if has_scod and staff_table and "UCOD" in existing:
+        # 担当者コード: TREED.MUS1 の SCOD1+SCOD2+SCOD3 を連結
+        if has_scod and "UCOD" in existing:
             scod_expr = (
                 "TRIM(COALESCE(CHAR(M.SCOD1),'')) || "
                 "TRIM(COALESCE(CHAR(M.SCOD2),'')) || "
@@ -141,11 +124,13 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             select_parts.append(f"{scod_expr} AS TANTO")
             sql_to_field["TANTO"] = "tanto"
             join_clause = (
-                f"LEFT JOIN {IBMI_STAFF_LIBRARY}.{staff_table} M "
+                f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
                 f"ON R.UCOD = M.UCOD"
             )
+            logger.info(f"担当者JOIN: LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} ON UCOD")
         else:
             join_clause = ""
+            logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
 
         # WHERE 句: RJU1D=' '(未削除) AND RJU1S='J'(受注残) の2条件のみ
         where = "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J'"
