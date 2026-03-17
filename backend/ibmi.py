@@ -146,7 +146,8 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
             f"{where} "
             f"ORDER BY R.NODAYU, R.DENNO"
         )
-        logger.info(f"実行クエリ: {query[:300]}...")
+        logger.info(f"WHERE句: {where}")
+        logger.info(f"実行クエリ全文: {query}")
 
         cursor.execute(query)
         # cursor.description から実際に返ったカラム名を取得（位置ずれを防ぐ）
@@ -178,9 +179,12 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
                 record[key] = record[key].strip()
         result.append(record)
 
-    # URIAG の実際の値を確認（売上済みフィルタの特定用）
-    uriag_samples = list({str(r.get("uriag", "")) for r in result[:200]})[:10]
-    logger.info(f"URIAG サンプル値: {uriag_samples}")
+    # サンプルデータの確認（フィルタ・担当者の検証用）
+    if result:
+        sample = result[0]
+        logger.info(f"先頭レコード: denno={sample.get('denno')} rju1d=[{sample.get('rju1d')}] rju1s=[{sample.get('rju1s')}] tanto=[{sample.get('tanto')}] uriag=[{sample.get('uriag')}]")
+        tanto_vals = list({str(r.get("tanto", "")) for r in result[:500] if r.get("tanto")})[:10]
+        logger.info(f"OTANT(tanto) サンプル値: {tanto_vals}")
     logger.info(f"IBM i から {len(result)} 件取得しました")
     return result
 
