@@ -17,19 +17,34 @@ def _do_sync(db: Session, triggered_by: str = "system") -> dict:
     started_at = datetime.now()
     try:
         rows = fetch_from_ibmi()
-        count = 0
 
-        seen = set()
+        # IBM i から取得した denno セット（重複除去）
+        seen: set = set()
+        valid_rows = []
         for row in rows:
             denno = row.get("denno")
-            if denno in seen:
-                continue  # IBM i に重複 denno がある場合はスキップ
+            if denno is None or denno in seen:
+                continue
             seen.add(denno)
+            valid_rows.append(row)
+
+        # IBM i に存在しなくなったレコードを削除（受注残から外れたもの）
+        if seen:
+            deleted = (
+                db.query(ShipmentCache)
+                .filter(~ShipmentCache.denno.in_(seen))
+                .delete(synchronize_session=False)
+            )
+            if deleted:
+                logger.info(f"削除済みレコード: {deleted}件（IBM i から消えたもの）")
+
+        # INSERT / UPDATE
+        for row in valid_rows:
             obj = ShipmentCache(**{**row, "synced_at": datetime.now()})
-            db.merge(obj)  # 存在すれば UPDATE、なければ INSERT
-            count += 1
+            db.merge(obj)
 
         db.commit()
+        count = len(valid_rows)
 
         log = SyncLog(
             synced_at=started_at,
