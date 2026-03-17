@@ -102,21 +102,28 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # 社員名マスタ TREED.MSL1 のカラム構成を調査
-        msl1_cols = []
+        # 社員名マスタ TREED.MSL1 の MSL1X* フィールドを CAST して名前候補を確認
+        msl1_name_col = None
         try:
             cursor.execute(
-                f"SELECT * FROM {IBMI_LIBRARY}.{IBMI_NAME_TABLE} "
-                f"FETCH FIRST 1 ROW ONLY"
+                f"SELECT SCOD1, SCOD2, SCOD3, "
+                f"CAST(MSL1XA AS VARGRAPHIC(60) CCSID 1200) AS XA, "
+                f"CAST(MSL1XB AS VARGRAPHIC(60) CCSID 1200) AS XB, "
+                f"CAST(MSL1XC AS VARGRAPHIC(60) CCSID 1200) AS XC, "
+                f"CAST(MSL1XD AS VARGRAPHIC(60) CCSID 1200) AS XD, "
+                f"CAST(MSL1XW AS VARGRAPHIC(60) CCSID 1200) AS XW "
+                f"FROM {IBMI_LIBRARY}.{IBMI_NAME_TABLE} "
+                f"WHERE SCOD1 = 'E' AND SCOD2 = '1' "
+                f"FETCH FIRST 5 ROWS ONLY"
             )
-            row0 = cursor.fetchone()
-            msl1_cols = [desc[0].upper() for desc in cursor.description]
-            logger.info(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} カラム一覧: {msl1_cols}")
-            if row0:
-                sample_vals = {col: repr(val) for col, val in zip(msl1_cols, row0)}
-                logger.info(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} 先頭行: {sample_vals}")
+            rows_msl1 = cursor.fetchall()
+            logger.info(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} SCOD1='E' SCOD2='1' 検索結果:")
+            for r in rows_msl1:
+                logger.info(f"  SCOD={r[0]}{r[1]}{r[2]}  XA=[{r[3]}] XB=[{r[4]}] XC=[{r[5]}] XD=[{r[6]}] XW=[{r[7]}]")
+            if not rows_msl1:
+                logger.warning(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE}: SCOD1='E' AND SCOD2='1' のレコードなし")
         except Exception as e:
-            logger.warning(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} アクセス失敗: {e}")
+            logger.warning(f"{IBMI_LIBRARY}.{IBMI_NAME_TABLE} CAST調査失敗: {e}")
 
         # SQLカラム名 → アプリフィールド名 のマッピング辞書
         sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
