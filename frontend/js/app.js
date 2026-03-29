@@ -150,6 +150,20 @@ const App = {
       if (e.key === "Enter") this.manualSearch();
     });
 
+    // テストQR生成
+    document.getElementById("gen-qr-btn").addEventListener("click", () => this._genTestQR());
+    document.getElementById("clear-qr-btn").addEventListener("click", () => this._clearTestQR());
+    document.getElementById("test-qr-input").addEventListener("keyup", (e) => {
+      if (e.key === "Enter") this._genTestQR();
+    });
+
+    // 画像ファイルから読み取り
+    document.getElementById("file-scan-input").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) this._scanFromFile(file);
+      e.target.value = "";
+    });
+
     // ブラウザの戻る操作
     window.addEventListener("popstate", () => {
       if (this.currentDetail) this.closeDetail();
@@ -663,6 +677,66 @@ const App = {
     } catch (e) {
       console.error("管理データ取得失敗:", e);
     }
+  },
+
+  // ---- テスト機能 ----
+  _genTestQR() {
+    const val = document.getElementById("test-qr-input").value.trim();
+    if (!val) { this.showToast("値を入力してください", "error"); return; }
+    if (typeof QRCode === "undefined") { this.showToast("QRコード生成ライブラリが未ロードです", "error"); return; }
+
+    const svg = new QRCode({ content: val, width: 200, height: 200, color: "#000000", background: "#ffffff", ecl: "M" }).svg();
+    const display = document.getElementById("test-qr-display");
+    display.innerHTML =
+      `<div style="display:inline-block;background:#fff;padding:12px;border-radius:8px;border:1px solid var(--border)">
+        ${svg}
+        <div style="font-size:12px;color:var(--text-light);margin-top:6px;word-break:break-all">${esc(val)}</div>
+      </div>
+      <p style="font-size:12px;color:var(--text-light);margin-top:8px">
+        ↑ このQRコードをカメラでスキャンしてください
+      </p>`;
+    document.getElementById("clear-qr-btn").style.display = "inline-flex";
+  },
+
+  _clearTestQR() {
+    document.getElementById("test-qr-display").innerHTML = "";
+    document.getElementById("test-qr-input").value = "";
+    document.getElementById("clear-qr-btn").style.display = "none";
+  },
+
+  _scanFromFile(file) {
+    const result = document.getElementById("file-scan-result");
+    if (typeof jsQR !== "function") {
+      result.innerHTML = `<span style="color:var(--danger)">❌ jsQRが未ロードです</span>`;
+      return;
+    }
+    result.innerHTML = `<span style="color:var(--text-light)">読み取り中...</span>`;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width  = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const qr = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+        if (qr && qr.data) {
+          result.innerHTML =
+            `<div style="color:var(--success,#2e7d32);font-weight:600">✅ 読み取り成功</div>
+             <code style="display:block;margin-top:4px;padding:6px;background:#f5f5f5;border-radius:4px;word-break:break-all;font-size:12px">${esc(qr.data)}</code>
+             <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="App.handleScanResult(${JSON.stringify(qr.data)})">この値で検索</button>`;
+        } else {
+          result.innerHTML =
+            `<span style="color:var(--danger)">❌ QRコードを検出できませんでした</span>
+             <div style="font-size:12px;color:var(--text-light);margin-top:4px">画像が鮮明でQRコードが写っているか確認してください</div>`;
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
   },
 
   // ---- ユーティリティ ----

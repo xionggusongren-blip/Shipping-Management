@@ -108,6 +108,36 @@
       </div>
     </div>
 
+    <!-- テスト機能 -->
+    <div class="card">
+      <div class="card-header">🧪 読み取りテスト</div>
+      <div class="card-body">
+        <p style="color:var(--text-light);font-size:13px;margin-bottom:12px">
+          スキャナーが正常に動作するか確認できます
+        </p>
+        <!-- テストQR生成 -->
+        <div style="margin-bottom:12px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">① QRコードを画面に表示してスキャン</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="text" id="test-qr-input" placeholder="伝票番号などを入力" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+            <button id="gen-qr-btn" class="btn btn-outline btn-sm">QR生成</button>
+            <button id="clear-qr-btn" class="btn btn-sm" style="display:none">消去</button>
+          </div>
+          <div id="test-qr-display" style="margin-top:10px;text-align:center"></div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+        <!-- 画像ファイルから読み取り -->
+        <div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">② 画像ファイルから読み取り</div>
+          <label id="file-scan-label" class="btn btn-outline btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+            🖼️ 画像を選択
+            <input type="file" id="file-scan-input" accept="image/*" style="display:none">
+          </label>
+          <div id="file-scan-result" style="margin-top:8px;font-size:13px"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="scan-result-area"></div>
   </div>
 
@@ -232,6 +262,7 @@
 <!-- アプリスクリプト -->
 <script src="/js/api.js"></script>
 <script src="/js/jsQR.min.js"></script>
+<script src="/js/qrcode.min.js"></script>
 <script src="/js/scanner.js"></script>
 <script src="/js/app.js"></script>
 
