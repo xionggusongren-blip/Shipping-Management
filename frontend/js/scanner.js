@@ -1,12 +1,14 @@
 /**
  * QRスキャン機能
- * CDN不要 - getUserMedia + BarcodeDetector (Android Chrome標準) で実装
+ * BarcodeDetector (Chrome/Android) 対応 + jsQR フォールバック (iOS Safari/Firefox 対応)
  */
 const Scanner = {
   _stream: null,
   _interval: null,
   _detecting: false,
   _frameCount: 0,
+  _canvas: null,
+  _ctx: null,
 
   _log(msg) {
     console.log("[Scanner]", msg);
@@ -23,8 +25,12 @@ const Scanner = {
     const dbg = document.getElementById("scan-debug");
     if (dbg) dbg.innerHTML = "";
 
+    const hasNative = "BarcodeDetector" in window;
+    const hasJsQR = typeof jsQR === "function";
+
     this._log("起動開始...");
-    this._log("BarcodeDetector: " + ("BarcodeDetector" in window ? "✅ 対応" : "❌ 非対応"));
+    this._log("BarcodeDetector: " + (hasNative ? "✅ 対応" : "❌ 非対応"));
+    this._log("jsQR フォールバック: " + (hasJsQR ? "✅ 利用可" : "❌ 未ロード"));
     this._log("getUserMedia: " + (navigator.mediaDevices ? "✅ 対応" : "❌ 非対応"));
 
     const container = document.getElementById(elementId);
@@ -69,39 +75,80 @@ const Scanner = {
       this._log("❌ video.play() 失敗: " + e.message);
     }
 
-    // BarcodeDetector 非対応端末の対応
-    if (!("BarcodeDetector" in window)) {
-      this._log("❌ BarcodeDetector非対応 → 手動入力を使用してください");
+    // BarcodeDetector ネイティブ対応
+    if (hasNative) {
+      const detector = new BarcodeDetector({ formats: ["qr_code"] });
+      this._log("✅ BarcodeDetector で QR検出ループ開始 (300ms間隔)");
+
+      this._interval = setInterval(async () => {
+        if (this._detecting || video.readyState < 2 || video.paused) return;
+        this._detecting = true;
+        this._frameCount++;
+        if (this._frameCount % 10 === 0) {
+          this._log("スキャン中... " + this._frameCount + "フレーム処理済");
+        }
+        try {
+          const codes = await detector.detect(video);
+          if (codes.length > 0) {
+            const value = codes[0].rawValue;
+            this._log("🎉 QR検出! " + value);
+            clearInterval(this._interval);
+            this._interval = null;
+            this.beep();
+            await this.stop();
+            onResult(value);
+          }
+        } catch (e) {
+          this._log("detect()エラー: " + e.message);
+        }
+        this._detecting = false;
+      }, 300);
+
       return true;
     }
 
-    const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    this._log("✅ QR検出ループ開始 (300ms間隔)");
+    // jsQR フォールバック (iOS Safari / Firefox など)
+    if (hasJsQR) {
+      this._canvas = document.createElement("canvas");
+      this._ctx = this._canvas.getContext("2d");
+      this._log("✅ jsQR フォールバックで QR検出ループ開始 (300ms間隔)");
 
-    this._interval = setInterval(async () => {
-      if (this._detecting || video.readyState < 2 || video.paused) return;
-      this._detecting = true;
-      this._frameCount++;
-      if (this._frameCount % 10 === 0) {
-        this._log("スキャン中... " + this._frameCount + "フレーム処理済");
-      }
-      try {
-        const codes = await detector.detect(video);
-        if (codes.length > 0) {
-          const value = codes[0].rawValue;
-          this._log("🎉 QR検出! " + value);
-          clearInterval(this._interval);
-          this._interval = null;
-          this.beep();
-          await this.stop();
-          onResult(value);
+      this._interval = setInterval(() => {
+        if (this._detecting || video.readyState < 2 || video.paused) return;
+        if (video.videoWidth === 0) return;
+        this._detecting = true;
+        this._frameCount++;
+        if (this._frameCount % 10 === 0) {
+          this._log("スキャン中(jsQR)... " + this._frameCount + "フレーム処理済");
         }
-      } catch (e) {
-        this._log("detect()エラー: " + e.message);
-      }
-      this._detecting = false;
-    }, 300);
+        try {
+          const w = video.videoWidth;
+          const h = video.videoHeight;
+          this._canvas.width = w;
+          this._canvas.height = h;
+          this._ctx.drawImage(video, 0, 0, w, h);
+          const imageData = this._ctx.getImageData(0, 0, w, h);
+          const result = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+          if (result) {
+            const value = result.data;
+            this._log("🎉 QR検出(jsQR)! " + value);
+            clearInterval(this._interval);
+            this._interval = null;
+            this.beep();
+            this.stop();
+            onResult(value);
+          }
+        } catch (e) {
+          this._log("jsQR エラー: " + e.message);
+        }
+        this._detecting = false;
+      }, 300);
 
+      return true;
+    }
+
+    // どちらも非対応
+    this._log("❌ QR検出非対応ブラウザ → 手動入力を使用してください");
     return true;
   },
 
@@ -115,6 +162,8 @@ const Scanner = {
       this._stream.getTracks().forEach(t => t.stop());
       this._stream = null;
     }
+    this._canvas = null;
+    this._ctx = null;
   },
 
   beep() {
