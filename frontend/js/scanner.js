@@ -77,14 +77,21 @@ const Scanner = {
 
     // BarcodeDetector ネイティブ対応
     if (hasNative) {
-      const detector = new BarcodeDetector({ formats: ["qr_code"] });
-      this._log("✅ BarcodeDetector で QR検出ループ開始 (300ms間隔)");
+      // サポートされているフォーマットを確認してから初期化
+      let formats = ["qr_code"];
+      try {
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const extra = ["code_128", "code_39", "ean_13", "data_matrix"].filter(f => supported.includes(f));
+        formats = ["qr_code", ...extra];
+      } catch (_) {}
+      const detector = new BarcodeDetector({ formats });
+      this._log("✅ BarcodeDetector で QR検出ループ開始 (200ms間隔) formats:" + formats.join(","));
 
       this._interval = setInterval(async () => {
         if (this._detecting || video.readyState < 2 || video.paused) return;
         this._detecting = true;
         this._frameCount++;
-        if (this._frameCount % 10 === 0) {
+        if (this._frameCount % 15 === 0) {
           this._log("スキャン中... " + this._frameCount + "フレーム処理済");
         }
         try {
@@ -102,7 +109,7 @@ const Scanner = {
           this._log("detect()エラー: " + e.message);
         }
         this._detecting = false;
-      }, 300);
+      }, 200);
 
       return true;
     }
@@ -110,25 +117,27 @@ const Scanner = {
     // jsQR フォールバック (iOS Safari / Firefox など)
     if (hasJsQR) {
       this._canvas = document.createElement("canvas");
-      this._ctx = this._canvas.getContext("2d");
-      this._log("✅ jsQR フォールバックで QR検出ループ開始 (300ms間隔)");
+      this._ctx = this._canvas.getContext("2d", { willReadFrequently: true });
+      this._log("✅ jsQR フォールバックで QR検出ループ開始 (200ms間隔)");
 
       this._interval = setInterval(() => {
         if (this._detecting || video.readyState < 2 || video.paused) return;
         if (video.videoWidth === 0) return;
         this._detecting = true;
         this._frameCount++;
-        if (this._frameCount % 10 === 0) {
+        if (this._frameCount % 15 === 0) {
           this._log("スキャン中(jsQR)... " + this._frameCount + "フレーム処理済");
         }
         try {
-          const w = video.videoWidth;
-          const h = video.videoHeight;
+          // 640px 幅にリサイズして処理速度を上げる
+          const scale = Math.min(1, 640 / video.videoWidth);
+          const w = Math.floor(video.videoWidth * scale);
+          const h = Math.floor(video.videoHeight * scale);
           this._canvas.width = w;
           this._canvas.height = h;
           this._ctx.drawImage(video, 0, 0, w, h);
           const imageData = this._ctx.getImageData(0, 0, w, h);
-          const result = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+          const result = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
           if (result) {
             const value = result.data;
             this._log("🎉 QR検出(jsQR)! " + value);
@@ -142,7 +151,7 @@ const Scanner = {
           this._log("jsQR エラー: " + e.message);
         }
         this._detecting = false;
-      }, 300);
+      }, 200);
 
       return true;
     }
