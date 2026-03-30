@@ -57,9 +57,33 @@ echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可�
 pip install --quiet -r backend\requirements-ibmi.txt 2>nul
 python -c "import pyodbc; print('[OK] pyodbc', pyodbc.version)" 2>nul || echo [WARNING] pyodbc 未インストール
 
-REM --- Generate SSL cert (再生成が必要な場合は cert.pem / key.pem を削除) ---
-echo [INFO] SSL証明書を確認中...
+REM --- Windows Firewall: ポート8443を自動開放 ---
+echo [INFO] ファイアウォール設定を確認中...
+netsh advfirewall firewall show rule name="ShippingMgmt-8443" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] ファイアウォールにポート8443のルールを追加中...
+    netsh advfirewall firewall add rule name="ShippingMgmt-8443" protocol=TCP dir=in localport=8443 action=allow >nul 2>&1
+    if errorlevel 1 (
+        echo [WARNING] ファイアウォール設定に失敗しました（管理者権限が必要な場合があります）
+        echo           右クリック→「管理者として実行」で start.bat を再実行してください
+    ) else (
+        echo [INFO] ファイアウォール: ポート8443を開放しました
+    )
+) else (
+    echo [INFO] ファイアウォール: ポート8443はすでに開放済みです
+)
+
+REM --- PCのIPアドレスを取得 ---
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /R "IPv4"') do (
+    set PC_IP=%%a
+)
+set PC_IP=%PC_IP: =%
+
+REM --- SSL証明書を毎回再生成（IPアドレス変化に対応） ---
+echo [INFO] SSL証明書を生成中...
 cd backend
+if exist cert.pem del cert.pem
+if exist key.pem del key.pem
 python generate_cert.py
 if errorlevel 1 (
     echo [WARNING] SSL証明書の生成に失敗しました。HTTPモードで起動します
@@ -73,19 +97,20 @@ REM --- Start app (HTTPS) ---
 :start_https
 echo.
 echo ======================================
-echo   起動完了 - アクセスURL
+echo   起動完了！スマホからアクセス
 echo ======================================
-echo   PC    : https://localhost:8443
-echo   スマホ: 上記の generate_cert.py の出力を確認
 echo.
-echo   ※ 初回は証明書警告が出ます
-echo      Chrome: 詳細設定 → アクセスする
-echo      Safari: 詳細を表示 → このWebサイトを閲覧
+echo   1. スマホとPCが同じWiFiに接続されているか確認
 echo.
-echo   ファイアウォールでポート 8443 を開放してください
-echo   [Windowsの場合]
-echo   netsh advfirewall firewall add rule name="ShippingMgmt" ^
-echo     protocol=TCP dir=in localport=8443 action=allow
+echo   2. スマホのブラウザで以下のURLを開く:
+echo      https://%PC_IP%:8443
+echo.
+echo   3. 「接続がプライベートではありません」という
+echo      警告が出たら:
+echo      [Chrome] 詳細設定 → %PC_IP% にアクセスする
+echo      [Safari] 詳細を表示 → このWebサイトを閲覧
+echo.
+echo   ※ PC から確認: https://localhost:8443
 echo ======================================
 echo   Ctrl+C で停止
 echo.
