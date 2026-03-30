@@ -73,11 +73,23 @@ if errorlevel 1 (
     echo [INFO] ファイアウォール: ポート8443はすでに開放済みです
 )
 
-REM --- PCのIPアドレスを取得 ---
+REM --- PCのIPアドレスを取得（192.168.x.x を優先）---
+set PC_IP=
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /R "IPv4"') do (
-    set PC_IP=%%a
+    set CANDIDATE=%%a
+    set CANDIDATE=!CANDIDATE: =!
+    echo !CANDIDATE! | findstr /b "192.168." >nul 2>&1
+    if not errorlevel 1 set PC_IP=!CANDIDATE!
 )
-set PC_IP=%PC_IP: =%
+REM 192.168.x.x がなければ最初のIPを使用
+if "%PC_IP%"=="" (
+    for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /R "IPv4"') do (
+        if "%PC_IP%"=="" (
+            set PC_IP=%%a
+            set PC_IP=!PC_IP: =!
+        )
+    )
+)
 
 REM --- SSL証明書を毎回再生成（IPアドレス変化に対応） ---
 echo [INFO] SSL証明書を生成中...
