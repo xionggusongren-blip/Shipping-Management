@@ -51,16 +51,19 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+REM SSL証明書生成に必要
+pip install --quiet cryptography 2>nul
 echo [INFO] IBM i 接続ライブラリを確認中（失敗しても動作可）...
 pip install --quiet -r backend\requirements-ibmi.txt 2>nul
-python -c "import pyodbc; print('[OK] pyodbc', pyodbc.version)" 2>nul || echo [WARNING] pyodbc 未インストール - pip install pyodbc を実行してください
+python -c "import pyodbc; print('[OK] pyodbc', pyodbc.version)" 2>nul || echo [WARNING] pyodbc 未インストール
 
-REM --- Generate SSL cert ---
-echo [INFO] SSL cert generating...
+REM --- Generate SSL cert (再生成が必要な場合は cert.pem / key.pem を削除) ---
+echo [INFO] SSL証明書を確認中...
 cd backend
 python generate_cert.py
 if errorlevel 1 (
-    echo [WARNING] SSL cert failed. Starting HTTP mode.
+    echo [WARNING] SSL証明書の生成に失敗しました。HTTPモードで起動します
+    echo [WARNING] スマホからのQRスキャンは HTTPS が必要です
     cd ..
     goto :start_http
 )
@@ -70,15 +73,21 @@ REM --- Start app (HTTPS) ---
 :start_https
 echo.
 echo ======================================
-echo   Access URL
+echo   起動完了 - アクセスURL
 echo ======================================
 echo   PC    : https://localhost:8443
-echo   PHONE : https://192.168.0.136:8443
-echo   NOTE  : Accept browser security warning on first access
-echo           Safari: [詳細を表示] then [このWebサイトを閲覧]
-echo           Chrome: [詳細設定] then [アクセスする]
+echo   スマホ: 上記の generate_cert.py の出力を確認
+echo.
+echo   ※ 初回は証明書警告が出ます
+echo      Chrome: 詳細設定 → アクセスする
+echo      Safari: 詳細を表示 → このWebサイトを閲覧
+echo.
+echo   ファイアウォールでポート 8443 を開放してください
+echo   [Windowsの場合]
+echo   netsh advfirewall firewall add rule name="ShippingMgmt" ^
+echo     protocol=TCP dir=in localport=8443 action=allow
 echo ======================================
-echo   Press Ctrl+C to stop
+echo   Ctrl+C で停止
 echo.
 
 cd backend
