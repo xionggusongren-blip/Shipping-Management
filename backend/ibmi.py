@@ -1,11 +1,11 @@
 """
 IBM i (DB2) 接続モジュール
 - 本番: pyodbc + IBM i Access ODBC Driver 経由で接続（jt400.jar 不要）
-- デモ: DEMO_MODE=true 時はサンプルデータを返す
+- デモ: 接続情報未設定時はサンプルデータを返す
 """
 import os
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -49,20 +49,22 @@ DESIRED_COLUMNS = [
     ("RJU1S",  "rju1s",     False),  # 受注ステータス: 'J'=受注残
 ]
 
+# 整数へ変換するアプリ内フィールド
+_INT_FIELDS = {"denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"}
 
-def fetch_from_ibmi() -> List[Dict[str, Any]]:
-    """IBM i RJU1 テーブルからデータを取得する"""
-    # 接続情報が揃っていれば ODBC 接続を優先（DEMO_MODE より優先）
-    if IBMI_HOST and IBMI_USER and IBMI_PASSWORD:
-        logger.info(f"IBM i ODBC 接続モード: {IBMI_HOST}")
-        return _fetch_via_odbc()
-
-    logger.info("DEMO MODE: IBM i 接続情報未設定のためサンプルデータを返します")
-    return _get_demo_data()
+# MUS1 の得意先名カラム候補（優先順位順）
+_CUSTOMER_NAME_CANDIDATES = ["UMNM1", "UMNMT", "UMNMK", "UNAM1", "UMNM2", "UNAME", "UNAMT"]
 
 
-def _fetch_via_odbc() -> List[Dict[str, Any]]:
-    """pyodbc + IBM i Access ODBC Driver で接続（カラムを動的に検出）"""
+def _sql_not_z999(prefix: str = "") -> str:
+    """Z999（担当なし）を除外する WHERE 条件。prefix はテーブル別名（例: 'M.'）"""
+    return (
+        f"NOT ({prefix}SCOD1 = 'Z' AND {prefix}SCOD2 = '9' AND {prefix}SCOD3 = '99')"
+    )
+
+
+def _connect():
+    """IBM i へ ODBC 接続する"""
     try:
         import pyodbc
     except ImportError:
@@ -76,123 +78,168 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
         f"UNICODESQL=1"
     )
+    return pyodbc.connect(conn_str, timeout=30)
 
+
+def _get_columns(cursor, table: str) -> Set[str]:
+    """テーブルに存在するカラム名の集合を返す"""
+    cursor.execute(
+        "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
+        "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        (IBMI_LIBRARY, table),
+    )
+    return {row[0].upper() for row in cursor.fetchall()}
+
+
+def fetch_from_ibmi() -> List[Dict[str, Any]]:
+    """IBM i RJU1 テーブルからデータを取得する"""
+    # 接続情報が揃っていれば ODBC 接続を優先（DEMO_MODE より優先）
+    if IBMI_HOST and IBMI_USER and IBMI_PASSWORD:
+        logger.info(f"IBM i ODBC 接続モード: {IBMI_HOST}")
+        return _fetch_via_odbc()
+
+    logger.info("DEMO MODE: IBM i 接続情報未設定のためサンプルデータを返します")
+    return _get_demo_data()
+
+
+def _probe_staff_tables(cursor) -> Tuple[bool, bool]:
+    """担当者マスタ・社員名マスタへの JOIN が可能か検証する
+
+    Returns:
+        (has_scod, has_wknm):
+        has_scod = MUS1 の SCOD1/2/3+UCOD にアクセス可能
+        has_wknm = MUS1→MSL1→MWK1 の3テーブルJOINで社員名を取得可能
+    """
+    has_scod = False
     try:
-        conn = pyodbc.connect(conn_str, timeout=30)
-        cursor = conn.cursor()
-
-        # RJU1 に存在するカラムを確認
         cursor.execute(
-            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
-            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-            (IBMI_LIBRARY, IBMI_TABLE)
+            f"SELECT SCOD1, SCOD2, SCOD3, UCOD "
+            f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
+            f"FETCH FIRST 1 ROW ONLY"
         )
-        existing = {row[0].upper() for row in cursor.fetchall()}
-        logger.info(f"RJU1 カラム数: {len(existing)}")
+        cursor.fetchall()
+        has_scod = True
+        logger.info(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE}: SCOD1/2/3+UCOD 確認OK")
+    except Exception as e:
+        logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
 
-        # 担当者マスタ TREED.MUS1 から直接1行取得して存在・カラムを確認
-        has_scod = False
-        try:
-            cursor.execute(
-                f"SELECT SCOD1, SCOD2, SCOD3, UCOD "
-                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
-                f"FETCH FIRST 1 ROW ONLY"
+    has_wknm = False
+    try:
+        cursor.execute(
+            f"SELECT M.SCOD1, M.SCOD2, M.SCOD3, S.WCOD, "
+            f"CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
+            f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
+            f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_BRIDGE_TABLE} S "
+            f"  ON M.SCOD1 = S.SCOD1 AND M.SCOD2 = S.SCOD2 AND M.SCOD3 = S.SCOD3 "
+            f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD "
+            f"WHERE M.SCOD1 = 'E' AND M.SCOD2 = '1' "
+            f"FETCH FIRST 3 ROWS ONLY"
+        )
+        rows_check = cursor.fetchall()
+        has_wknm = True
+        logger.info("MUS1→MSL1→MWK1 JOIN確認OK:")
+        for r in rows_check:
+            logger.info(f"  SCOD={r[0]}{r[1]}{r[2]} WCOD={r[3]} WKNM=[{r[4]}]")
+    except Exception as e:
+        logger.warning(f"MUS1→MSL1→MWK1 JOIN失敗: {e}")
+
+    return has_scod, has_wknm
+
+
+def _build_shipment_query(existing: Set[str], has_scod: bool, has_wknm: bool) -> str:
+    """RJU1 取得クエリ（SELECT/JOIN/WHERE/ORDER BY）を組み立てる"""
+    # 存在するカラムのみ SELECT に含める（R. プレフィックス + 明示的 AS エイリアス）
+    select_parts = []
+    for col, _field, needs_cast in DESIRED_COLUMNS:
+        if col not in existing:
+            logger.debug(f"カラム {col} は存在しないためスキップ")
+            continue
+        if needs_cast:
+            select_parts.append(
+                f"CAST(R.{col} AS VARGRAPHIC(60) CCSID 1200) AS {col}"
             )
-            cursor.fetchall()
-            has_scod = True
-            logger.info(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE}: SCOD1/2/3+UCOD 確認OK")
-        except Exception as e:
-            logger.warning(f"{IBMI_LIBRARY}.{IBMI_STAFF_TABLE} アクセス失敗: {e}")
+        else:
+            select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
 
-        # MUS1.SCOD → MSL1.SCOD → MSL1.WCOD → MWK1.WCOD → WKNM の3テーブルJOIN検証
-        has_wknm = False
-        try:
-            cursor.execute(
-                f"SELECT M.SCOD1, M.SCOD2, M.SCOD3, S.WCOD, "
-                f"CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200) AS WKNM "
-                f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M "
+    # 担当者コード+社員名: MUS1(コード) LEFT JOIN MWK1(名前)
+    join_clause = ""
+    if has_scod and "UCOD" in existing:
+        scod_expr = (
+            "TRIM(COALESCE(CHAR(M.SCOD1),'')) || "
+            "TRIM(COALESCE(CHAR(M.SCOD2),'')) || "
+            "TRIM(COALESCE(CHAR(M.SCOD3),''))"
+        )
+        if has_wknm:
+            tanto_expr = (
+                f"{scod_expr} || ' ' || "
+                f"TRIM(COALESCE(CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200),''))"
+            )
+            join_clause = (
+                f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD "
                 f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_BRIDGE_TABLE} S "
                 f"  ON M.SCOD1 = S.SCOD1 AND M.SCOD2 = S.SCOD2 AND M.SCOD3 = S.SCOD3 "
-                f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD "
-                f"WHERE M.SCOD1 = 'E' AND M.SCOD2 = '1' "
-                f"FETCH FIRST 3 ROWS ONLY"
+                f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD"
             )
-            rows_check = cursor.fetchall()
-            has_wknm = True
-            logger.info(f"MUS1→MSL1→MWK1 JOIN確認OK:")
-            for r in rows_check:
-                logger.info(f"  SCOD={r[0]}{r[1]}{r[2]} WCOD={r[3]} WKNM=[{r[4]}]")
-        except Exception as e:
-            logger.warning(f"MUS1→MSL1→MWK1 JOIN失敗: {e}")
-
-        # SQLカラム名 → アプリフィールド名 のマッピング辞書
-        sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
-        sql_to_field["TANTO"] = "tanto"  # JOIN由来のエイリアス
-
-        # 存在するカラムのみ SELECT に含める（R. プレフィックス + 明示的 AS エイリアス）
-        select_parts = []
-        for col, field, needs_cast in DESIRED_COLUMNS:
-            if col not in existing:
-                logger.debug(f"カラム {col} は存在しないためスキップ")
-                continue
-            if needs_cast:
-                select_parts.append(
-                    f"CAST(R.{col} AS VARGRAPHIC(60) CCSID 1200) AS {col}"
-                )
-            else:
-                select_parts.append(f"R.{col} AS {col}")  # 明示エイリアスで名前固定
-
-        # 担当者コード+社員名: MUS1(コード) LEFT JOIN MWK1(名前)
-        if has_scod and "UCOD" in existing:
-            scod_expr = (
-                "TRIM(COALESCE(CHAR(M.SCOD1),'')) || "
-                "TRIM(COALESCE(CHAR(M.SCOD2),'')) || "
-                "TRIM(COALESCE(CHAR(M.SCOD3),''))"
-            )
-            if has_wknm:
-                tanto_expr = (
-                    f"{scod_expr} || ' ' || "
-                    f"TRIM(COALESCE(CAST(N.WKNM AS VARGRAPHIC(30) CCSID 1200),''))"
-                )
-                join_clause = (
-                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD "
-                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_BRIDGE_TABLE} S "
-                    f"  ON M.SCOD1 = S.SCOD1 AND M.SCOD2 = S.SCOD2 AND M.SCOD3 = S.SCOD3 "
-                    f"LEFT JOIN {IBMI_NAME_LIBRARY}.{IBMI_NAME_TABLE} N ON S.WCOD = N.WCOD"
-                )
-                logger.info(f"担当者JOIN: MUS1→MSL1→MWK1(WKNM) 担当者コード+社員名")
-            else:
-                tanto_expr = scod_expr
-                join_clause = (
-                    f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD"
-                )
-                logger.info(f"担当者JOIN: MUS1のみ（MWK1不可）")
-            select_parts.append(f"{tanto_expr} AS TANTO")
-            sql_to_field["TANTO"] = "tanto"
+            logger.info("担当者JOIN: MUS1→MSL1→MWK1(WKNM) 担当者コード+社員名")
         else:
-            join_clause = ""
-            logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
-
-        # WHERE 句: 未削除 AND 受注残 AND Z999除外（MUS1がJOINされている場合のみSCOD条件）
-        if has_scod:
-            where = (
-                "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J' "
-                "AND NOT (M.SCOD1 = 'Z' AND M.SCOD2 = '9' AND M.SCOD3 = '99')"
+            tanto_expr = scod_expr
+            join_clause = (
+                f"LEFT JOIN {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} M ON R.UCOD = M.UCOD"
             )
-        else:
-            where = "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J'"
+            logger.info("担当者JOIN: MUS1のみ（MWK1不可）")
+        select_parts.append(f"{tanto_expr} AS TANTO")
+    else:
+        logger.warning("担当者JOIN不可: SCOD1/2/3+UCOD が見つかりません")
 
-        query = (
-            f"SELECT {', '.join(select_parts)} "
-            f"FROM {IBMI_LIBRARY}.{IBMI_TABLE} R "
-            f"{join_clause} "
-            f"{where} "
-            f"ORDER BY R.NODAYU, R.DENNO"
-        )
-        logger.info(f"WHERE句: {where}")
-        logger.info(f"実行クエリ全文: {query}")
+    # WHERE 句: 未削除 AND 受注残 AND Z999除外（MUS1がJOINされている場合のみSCOD条件）
+    where = "WHERE R.RJU1D = ' ' AND R.RJU1S = 'J'"
+    if has_scod:
+        where += f" AND {_sql_not_z999('M.')}"
 
+    query = (
+        f"SELECT {', '.join(select_parts)} "
+        f"FROM {IBMI_LIBRARY}.{IBMI_TABLE} R "
+        f"{join_clause} "
+        f"{where} "
+        f"ORDER BY R.NODAYU, R.DENNO"
+    )
+    logger.info(f"WHERE句: {where}")
+    logger.info(f"実行クエリ全文: {query}")
+    return query
+
+
+def _row_to_record(result_cols: List[str], row, sql_to_field: Dict[str, str]) -> Dict[str, Any]:
+    """1行を cursor.description のカラム名でマッピング（位置ベースではなく名前ベース）"""
+    record = {}
+    for col_name, value in zip(result_cols, row):
+        field = sql_to_field.get(col_name, col_name.lower())
+        record[field] = value
+    for key in _INT_FIELDS:
+        if key in record and record[key] is not None:
+            try:
+                record[key] = int(record[key])
+            except (ValueError, TypeError):
+                record[key] = 0
+    for key, value in record.items():
+        if isinstance(value, str):
+            record[key] = value.strip()
+    return record
+
+
+def _fetch_via_odbc() -> List[Dict[str, Any]]:
+    """pyodbc + IBM i Access ODBC Driver で接続（カラムを動的に検出）"""
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+
+        existing = _get_columns(cursor, IBMI_TABLE)
+        logger.info(f"RJU1 カラム数: {len(existing)}")
+
+        has_scod, has_wknm = _probe_staff_tables(cursor)
+
+        query = _build_shipment_query(existing, has_scod, has_wknm)
         cursor.execute(query)
+
         # cursor.description から実際に返ったカラム名を取得（位置ずれを防ぐ）
         result_cols = [desc[0].upper() for desc in cursor.description]
         logger.info(f"返却カラム: {result_cols}")
@@ -203,33 +250,30 @@ def _fetch_via_odbc() -> List[Dict[str, Any]]:
         logger.error(f"IBM i ODBC エラー: {e}")
         raise
 
-    int_fields = {"denno", "ucod", "hcod", "suryo", "nodayu", "nodays", "sykdy", "slcrt"}
-    result = []
-    for row in rows:
-        # cursor.description のカラム名でマッピング（位置ベースではなく名前ベース）
-        record = {}
-        for col_name, value in zip(result_cols, row):
-            field = sql_to_field.get(col_name, col_name.lower())
-            record[field] = value
-        for key in int_fields:
-            if key in record and record[key] is not None:
-                try:
-                    record[key] = int(record[key])
-                except (ValueError, TypeError):
-                    record[key] = 0
-        for key in list(record.keys()):
-            if isinstance(record[key], str):
-                record[key] = record[key].strip()
-        result.append(record)
+    # SQLカラム名 → アプリフィールド名 のマッピング辞書
+    sql_to_field = {col: field for col, field, _ in DESIRED_COLUMNS}
+    sql_to_field["TANTO"] = "tanto"  # JOIN由来のエイリアス
+
+    result = [_row_to_record(result_cols, row, sql_to_field) for row in rows]
 
     # サンプルデータの確認（フィルタ・担当者の検証用）
     if result:
         sample = result[0]
-        logger.info(f"先頭レコード: denno={sample.get('denno')} rju1d=[{sample.get('rju1d')}] rju1s=[{sample.get('rju1s')}] tanto=[{sample.get('tanto')}] uriag=[{sample.get('uriag')}]")
+        logger.info(
+            f"先頭レコード: denno={sample.get('denno')} rju1d=[{sample.get('rju1d')}] "
+            f"rju1s=[{sample.get('rju1s')}] tanto=[{sample.get('tanto')}] uriag=[{sample.get('uriag')}]"
+        )
         tanto_vals = list({str(r.get("tanto", "")) for r in result[:500] if r.get("tanto")})[:10]
         logger.info(f"OTANT(tanto) サンプル値: {tanto_vals}")
     logger.info(f"IBM i から {len(result)} 件取得しました")
     return result
+
+
+def _find_customer_name_column(cursor) -> Optional[str]:
+    """MUS1 の全カラムから得意先名カラムを特定する（見つからなければ None）"""
+    all_cols = _get_columns(cursor, IBMI_STAFF_TABLE)
+    logger.info(f"MUS1 全カラム: {sorted(all_cols)}")
+    return next((c for c in _CUSTOMER_NAME_CANDIDATES if c in all_cols), None)
 
 
 def fetch_customers_from_ibmi() -> List[Dict[str, Any]]:
@@ -239,53 +283,25 @@ def fetch_customers_from_ibmi() -> List[Dict[str, Any]]:
         return _get_demo_customers()
 
     try:
-        import pyodbc
-    except ImportError:
-        return []
-
-    conn_str = (
-        f"DRIVER={{IBM i Access ODBC Driver}};"
-        f"SYSTEM={IBMI_HOST};"
-        f"UID={IBMI_USER};"
-        f"PWD={IBMI_PASSWORD};"
-        f"DBQ=QGPL TREEW {IBMI_LIBRARY};"
-        f"UNICODESQL=1"
-    )
-    try:
-        conn = pyodbc.connect(conn_str, timeout=30)
+        conn = _connect()
         cursor = conn.cursor()
 
-        # MUS1 の全カラムを確認して得意先名カラムを特定
-        cursor.execute(
-            "SELECT COLUMN_NAME FROM QSYS2.SYSCOLUMNS "
-            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
-            (IBMI_LIBRARY, IBMI_STAFF_TABLE)
-        )
-        all_cols = {row[0].upper() for row in cursor.fetchall()}
-        logger.info(f"MUS1 全カラム: {sorted(all_cols)}")
-
-        # 得意先名カラム候補（優先順位順）
-        name_candidates = ["UMNM1", "UMNMT", "UMNMK", "UNAM1", "UMNM2", "UNAME", "UNAMT"]
-        name_col = next((c for c in name_candidates if c in all_cols), None)
-
+        name_col = _find_customer_name_column(cursor)
         if name_col:
             logger.info(f"得意先名カラム: {name_col}")
             cursor.execute(
                 f"SELECT UCOD, CAST({name_col} AS VARGRAPHIC(60) CCSID 1200) AS UNAME "
                 f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
-                f"WHERE UCOD IS NOT NULL "
-                f"AND NOT (SCOD1 = 'Z' AND SCOD2 = '9' AND SCOD3 = '99') "
+                f"WHERE UCOD IS NOT NULL AND {_sql_not_z999()} "
                 f"GROUP BY UCOD, {name_col} "
                 f"ORDER BY UCOD"
             )
         else:
-            # 名前カラムが見つからない場合は UCOD のみ
             logger.warning("MUS1 に得意先名カラムが見つかりません。UCODのみ取得します")
             cursor.execute(
                 f"SELECT DISTINCT UCOD, '' AS UNAME "
                 f"FROM {IBMI_LIBRARY}.{IBMI_STAFF_TABLE} "
-                f"WHERE UCOD IS NOT NULL "
-                f"AND NOT (SCOD1 = 'Z' AND SCOD2 = '9' AND SCOD3 = '99') "
+                f"WHERE UCOD IS NOT NULL AND {_sql_not_z999()} "
                 f"ORDER BY UCOD"
             )
 
@@ -294,11 +310,9 @@ def fetch_customers_from_ibmi() -> List[Dict[str, Any]]:
         conn.close()
 
         result = []
-        for row in rows:
-            ucod = row[0]
-            uname = (row[1] or "").strip() if row[1] else ""
+        for ucod, uname in rows:
             if ucod:
-                result.append({"ucod": int(ucod), "uname": uname})
+                result.append({"ucod": int(ucod), "uname": (uname or "").strip()})
         logger.info(f"得意先マスタ: {len(result)}件取得")
         return result
 

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from database import get_db, init_db, SessionLocal
@@ -113,6 +113,14 @@ def health():
 
 _NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0"
 
+
+def _no_cache_file(path: str, media_type: str) -> FileResponse:
+    """キャッシュ無効ヘッダー付きでファイルを配信する"""
+    resp = FileResponse(path, media_type=media_type)
+    resp.headers["Cache-Control"] = _NO_CACHE
+    return resp
+
+
 # フロントエンド静的ファイルの配信
 _frontend_abs = os.path.abspath(FRONTEND_DIR)
 if os.path.exists(_frontend_abs):
@@ -123,23 +131,17 @@ if os.path.exists(_frontend_abs):
         path = os.path.join(_frontend_abs, "js", filename)
         if not os.path.exists(path):
             raise HTTPException(status_code=404)
-        resp = FileResponse(path, media_type="application/javascript")
-        resp.headers["Cache-Control"] = _NO_CACHE
-        return resp
+        return _no_cache_file(path, "application/javascript")
 
     @app.get("/", include_in_schema=False)
     def serve_index():
-        resp = FileResponse(os.path.join(_frontend_abs, "index.html"), media_type="text/html")
-        resp.headers["Cache-Control"] = _NO_CACHE
-        return resp
+        return _no_cache_file(os.path.join(_frontend_abs, "index.html"), "text/html")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_frontend(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404)
-        resp = FileResponse(os.path.join(_frontend_abs, "index.html"), media_type="text/html")
-        resp.headers["Cache-Control"] = _NO_CACHE
-        return resp
+        return _no_cache_file(os.path.join(_frontend_abs, "index.html"), "text/html")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,20 @@
 /**
  * 荷物管理Webアプリ - メインアプリケーション
  */
+const HAISO_NAMES = {
+  YAMTO: "ヤマト運輸",
+  SAGAWA: "佐川急便",
+  FUKUTU: "福山通運",
+  NIPPON: "日本郵便",
+  SEINO: "西濃運輸",
+};
+
 const App = {
   currentTab: "list",
   currentDetail: null,
   scannerStarted: false,
   _cameraMode: false,
   listData: [],
-  filterParams: {},
 
   // ---- 初期化 ----
   async init() {
@@ -31,19 +38,28 @@ const App = {
     await Promise.all([this.loadTantos(), this.loadCustomers(), this.loadShipments()]);
   },
 
+  // 先頭のオプション（全〇〇）を残して選択肢を入れ替え、選択状態を復元する
+  _fillSelect(selectId, items, toOption) {
+    const sel = document.getElementById(selectId);
+    const current = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    items.forEach((item) => {
+      const { value, label } = toOption(item);
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
+  },
+
   async loadCustomers() {
     try {
       const customers = await Api.getCustomers();
-      const sel = document.getElementById("filter-ucod");
-      const current = sel.value;
-      while (sel.options.length > 1) sel.remove(1);
-      customers.forEach(({ ucod, uname }) => {
-        const opt = document.createElement("option");
-        opt.value = ucod;
-        opt.textContent = uname || String(ucod);
-        sel.appendChild(opt);
-      });
-      if (current) sel.value = current;
+      this._fillSelect("filter-ucod", customers, ({ ucod, uname }) => ({
+        value: ucod,
+        label: uname || String(ucod),
+      }));
     } catch (e) {
       console.warn("得意先一覧の取得失敗:", e);
     }
@@ -52,20 +68,11 @@ const App = {
   async loadTantos() {
     try {
       const tantos = await Api.getTantos();
-      const sel = document.getElementById("filter-tanto");
-      // 既存オプション（全担当）を残して追加
-      const current = sel.value;
-      while (sel.options.length > 1) sel.remove(1);
-      tantos.forEach(({ tanto }) => {
-        const opt = document.createElement("option");
-        // value はコード部分のみ（例: "E102"）、表示は "E102 山田太郎" 全体
-        const code = tanto.split(" ")[0];
-        opt.value = code;
-        opt.textContent = tanto;
-        sel.appendChild(opt);
-      });
-      // 選択状態を復元
-      if (current) sel.value = current;
+      // value はコード部分のみ（例: "E102"）、表示は "E102 山田太郎" 全体
+      this._fillSelect("filter-tanto", tantos, ({ tanto }) => ({
+        value: tanto.split(" ")[0],
+        label: tanto,
+      }));
     } catch (e) {
       console.warn("担当者一覧の取得失敗:", e);
     }
@@ -204,7 +211,6 @@ const App = {
     const status = document.getElementById("filter-status").value;
     const tanto = document.getElementById("filter-tanto").value;
     const ucod = document.getElementById("filter-ucod").value;
-    const user = Api.getUser();
 
     const params = { keyword, status };
     if (tanto) params.tanto = tanto;
@@ -271,14 +277,18 @@ const App = {
   },
 
   // ---- 詳細画面 ----
+  _openDetailPanel(data) {
+    this.currentDetail = data;
+    this._renderDetail(data);
+    document.getElementById("detail-panel").classList.add("open");
+    history.pushState({ detail: data.denno }, "");
+  },
+
   async openDetail(denno) {
     this.showLoading(true);
     try {
       const data = await Api.getShipment(denno);
-      this.currentDetail = data;
-      this._renderDetail(data);
-      document.getElementById("detail-panel").classList.add("open");
-      history.pushState({ detail: denno }, "");
+      this._openDetailPanel(data);
     } catch (e) {
       this.showToast("詳細取得失敗: " + e.message, "error");
     } finally {
@@ -293,7 +303,6 @@ const App = {
   },
 
   _renderDetail(d) {
-    const HAISO = { YAMTO: "ヤマト運輸", SAGAWA: "佐川急便", FUKUTU: "福山通運", NIPPON: "日本郵便", SEINO: "西濃運輸" };
     document.getElementById("detail-title").textContent = `伝票 #${d.denno}`;
 
     const fields = [
@@ -309,7 +318,7 @@ const App = {
       ["nodayu_str", "得意先納期", d.nodayu_str || "-"],
       ["nodays_str", "指定納期", d.nodays_str || "-"],
       ["sykdy_str", "出荷日", d.sykdy_str || "-"],
-      ["haiso", "配送方法", HAISO[d.haiso] || d.haiso || "-"],
+      ["haiso", "配送方法", HAISO_NAMES[d.haiso] || d.haiso || "-"],
       ["denno", "伝票番号", d.denno ? String(d.denno) : "-"],
       ["utno1", "得意先注番", d.utno1 || "-"],
       ["tanto", "担当者", d.tanto || "-"],
@@ -366,20 +375,17 @@ const App = {
     }
   },
 
+  // PDF Blob を別タブで開く（URL は10秒後に破棄）
+  _openPdfBlob(blob) {
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank");
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+  },
+
   printLabel() {
     if (!this.currentDetail) return;
-    const url = `${window.location.origin}/api/shipments/${this.currentDetail.denno}/label`;
-    const token = Api.getToken();
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => {
-        if (!res.ok) throw new Error("PDF生成に失敗しました");
-        return res.blob();
-      })
-      .then((blob) => {
-        const blobUrl = URL.createObjectURL(blob);
-        window.open(blobUrl, "_blank");
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-      })
+    Api.getLabel(this.currentDetail.denno)
+      .then((blob) => this._openPdfBlob(blob))
       .catch((e) => this.showToast(e.message, "error"));
   },
 
@@ -387,11 +393,7 @@ const App = {
     const d = denno || this.currentDetail?.denno;
     if (!d) return;
     Api.getMeisai(d)
-      .then((blob) => {
-        const blobUrl = URL.createObjectURL(blob);
-        window.open(blobUrl, "_blank");
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-      })
+      .then((blob) => this._openPdfBlob(blob))
       .catch((e) => this.showToast(e.message, "error"));
   },
 
@@ -582,10 +584,7 @@ const App = {
     document.getElementById("ship-meisai-btn").addEventListener("click", () => this.printMeisai(data.denno));
     document.getElementById("ship-detail-btn").addEventListener("click", () => {
       document.getElementById("scan-result-area").innerHTML = "";
-      this.currentDetail = data;
-      this._renderDetail(data);
-      document.getElementById("detail-panel").classList.add("open");
-      history.pushState({ detail: data.denno }, "");
+      this._openDetailPanel(data);
     });
     document.getElementById("ship-cancel-btn").addEventListener("click", () => {
       document.getElementById("scan-result-area").innerHTML = "";

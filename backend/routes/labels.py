@@ -1,8 +1,10 @@
 """荷札PDF生成 API"""
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from io import BytesIO
+from typing import Callable
 
 from database import get_db, ShipmentCache, ShipmentStatus
 from models import ibmi_date_to_str
@@ -19,28 +21,58 @@ HAISO_NAMES = {
 }
 
 
-def _generate_label_pdf(cache: ShipmentCache, status_rec) -> bytes:
-    """荷札PDFを生成する（ReportLab使用）"""
+def _make_canvas(buffer: BytesIO, pagesize):
+    """ReportLab canvas と日本語フォント名を返す（reportlab 未導入なら RuntimeError）"""
     try:
-        from reportlab.lib.pagesizes import A6
-        from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     except ImportError:
         raise RuntimeError("reportlab がインストールされていません")
 
-    buffer = BytesIO()
-    # A6サイズ（148mm x 105mm）横向き
-    page_width, page_height = 148 * mm, 105 * mm
-    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
-
-    # 日本語フォント登録
+    c = canvas.Canvas(buffer, pagesize=pagesize)
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
         font_name = "HeiseiMin-W3"
     except Exception:
         font_name = "Helvetica"
+    return c, font_name
+
+
+def _mm() -> float:
+    """reportlab の mm 単位（reportlab 未導入なら RuntimeError）"""
+    try:
+        from reportlab.lib.units import mm
+    except ImportError:
+        raise RuntimeError("reportlab がインストールされていません")
+    return mm
+
+
+def _pdf_response(db: Session, denno: int, generate: Callable, prefix: str) -> StreamingResponse:
+    """伝票を取得して PDF を生成し、ダウンロードレスポンスを返す共通処理"""
+    cache = db.query(ShipmentCache).filter(ShipmentCache.denno == denno).first()
+    if not cache:
+        raise HTTPException(status_code=404, detail="荷物が見つかりません")
+
+    status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
+    try:
+        pdf_bytes = generate(cache, status_rec)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={prefix}_{denno}.pdf"},
+    )
+
+
+def _generate_label_pdf(cache: ShipmentCache, status_rec) -> bytes:
+    """荷札PDF（A6横 148mm×105mm）を生成する"""
+    mm = _mm()
+    buffer = BytesIO()
+    page_width, page_height = 148 * mm, 105 * mm
+    c, font_name = _make_canvas(buffer, (page_width, page_height))
 
     margin = 5 * mm
 
@@ -110,26 +142,13 @@ def _generate_label_pdf(cache: ShipmentCache, status_rec) -> bytes:
 
 def _generate_meisai_pdf(cache: ShipmentCache, status_rec) -> bytes:
     """出荷明細書PDF（A4縦）を生成する"""
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.pdfgen import canvas
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-    except ImportError:
-        raise RuntimeError("reportlab がインストールされていません")
+    mm = _mm()
+    from reportlab.lib.pagesizes import A4
 
     buffer = BytesIO()
     page_width, page_height = A4  # 210mm × 297mm
-    c = canvas.Canvas(buffer, pagesize=A4)
+    c, fn = _make_canvas(buffer, A4)
 
-    try:
-        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
-        fn = "HeiseiMin-W3"
-    except Exception:
-        fn = "Helvetica"
-
-    from datetime import datetime
     now_str = datetime.now().strftime("%Y/%m/%d %H:%M")
     margin = 15 * mm
 
@@ -260,19 +279,7 @@ def get_meisai(
     current_user: User = Depends(get_current_user),
 ):
     """出荷明細書PDFを生成してダウンロードする"""
-    cache = db.query(ShipmentCache).filter(ShipmentCache.denno == denno).first()
-    if not cache:
-        raise HTTPException(status_code=404, detail="荷物が見つかりません")
-    status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
-    try:
-        pdf_bytes = _generate_meisai_pdf(cache, status_rec)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return StreamingResponse(
-        BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=meisai_{denno}.pdf"},
-    )
+    return _pdf_response(db, denno, _generate_meisai_pdf, "meisai")
 
 
 @router.get("/shipments/{denno}/label")
@@ -282,19 +289,4 @@ def get_label(
     current_user: User = Depends(get_current_user),
 ):
     """荷札PDFを生成してダウンロードする"""
-    cache = db.query(ShipmentCache).filter(ShipmentCache.denno == denno).first()
-    if not cache:
-        raise HTTPException(status_code=404, detail="荷物が見つかりません")
-
-    status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
-
-    try:
-        pdf_bytes = _generate_label_pdf(cache, status_rec)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return StreamingResponse(
-        BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=label_{denno}.pdf"},
-    )
+    return _pdf_response(db, denno, _generate_label_pdf, "label")

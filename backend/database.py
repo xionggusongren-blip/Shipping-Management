@@ -1,5 +1,5 @@
 """SQLite データベース設定"""
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+from sqlalchemy import create_engine, text, Column, Integer, String, DateTime, Text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from datetime import datetime
 import os
@@ -116,9 +116,7 @@ def _migrate_add_columns():
     with engine.connect() as conn:
         for table, col, col_type in migrations:
             try:
-                conn.execute(__import__("sqlalchemy").text(
-                    f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
-                ))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
                 conn.commit()
             except Exception:
                 pass  # カラムが既に存在する場合はスキップ

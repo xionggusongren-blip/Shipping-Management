@@ -2,14 +2,33 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, distinct
-from typing import Optional, List
+from typing import Iterable, Optional, List, Dict
 from datetime import datetime
 
 from database import get_db, ShipmentCache, ShipmentStatus, CustomerCache
-from models import ShipmentListItem, ShipmentResponse, StatusUpdate, ibmi_date_to_str
+from models import StatusUpdate, ibmi_date_to_str
 from auth import get_current_user, User
 
 router = APIRouter()
+
+# Z999 = 担当なしコード。一覧・フィルター候補の両方から除外する
+TANTO_EXCLUDED_PREFIX = "Z999"
+
+VALID_STATUSES = ["未処理", "梱包中", "出荷済", "納品完了"]
+
+
+def _not_z999():
+    """Z999（担当なし）を除外する SQLAlchemy フィルター条件"""
+    return ~ShipmentCache.tanto.like(f"{TANTO_EXCLUDED_PREFIX}%")
+
+
+def _customer_name_map(db: Session, ucods: Iterable[int]) -> Dict[int, str]:
+    """得意先コード → 得意先名 のマップを返す"""
+    ucods = {u for u in ucods if u}
+    if not ucods:
+        return {}
+    rows = db.query(CustomerCache).filter(CustomerCache.ucod.in_(ucods)).all()
+    return {r.ucod: r.uname or "" for r in rows}
 
 
 def _build_response(cache: ShipmentCache, status_rec: Optional[ShipmentStatus]) -> dict:
@@ -30,8 +49,6 @@ def _auto_status(cache: ShipmentCache) -> str:
         return "納品完了"
     if cache.sykdy and cache.sykdy > 0:
         return "出荷済"
-    if cache.juchu == "1":
-        return "未処理"
     return "未処理"
 
 
@@ -44,15 +61,16 @@ def get_customers(
     rows = db.query(CustomerCache).order_by(CustomerCache.ucod).all()
     if rows:
         return [{"ucod": r.ucod, "uname": r.uname or str(r.ucod)} for r in rows]
+
     # フォールバック: 荷物キャッシュの出荷先名を使用
     pairs = (
         db.query(ShipmentCache.ucod, ShipmentCache.synm1)
-        .filter(ShipmentCache.ucod.isnot(None), ~ShipmentCache.tanto.like("Z999%"))
+        .filter(ShipmentCache.ucod.isnot(None), _not_z999())
         .distinct()
         .order_by(ShipmentCache.ucod)
         .all()
     )
-    seen = {}
+    seen: Dict[int, str] = {}
     for ucod, synm1 in pairs:
         if ucod and ucod not in seen:
             seen[ucod] = (synm1 or "").strip()
@@ -70,7 +88,7 @@ def get_tantos(
         .filter(
             ShipmentCache.tanto.isnot(None),
             ShipmentCache.tanto != "",
-            ~ShipmentCache.tanto.like("Z999%"),
+            _not_z999(),
         )
         .order_by(ShipmentCache.tanto)
         .all()
@@ -81,17 +99,15 @@ def get_tantos(
 @router.get("/shipments", response_model=List[dict])
 def get_shipments(
     tanto: Optional[str] = Query(None, description="担当者コードで絞り込み"),
-    ucod: Optional[int] = Query(None, description="得意先コードで絞り込み（得意先フィルター）"),
+    ucod: Optional[int] = Query(None, description="得意先コードで絞り込み"),
     status: Optional[str] = Query(None, description="ステータスで絞り込み"),
-    date_from: Optional[str] = Query(None, description="納期FROM (YYYY/MM/DD)"),
-    date_to: Optional[str] = Query(None, description="納期TO (YYYY/MM/DD)"),
-    keyword: Optional[str] = Query(None, description="品名・出荷先名フリーワード"),
+    keyword: Optional[str] = Query(None, description="品名・出荷先名・担当者名フリーワード"),
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(ShipmentCache).filter(~ShipmentCache.tanto.like("Z999%"))
+    query = db.query(ShipmentCache).filter(_not_z999())
 
     if tanto:
         # tanto フィールドは「E102 山田太郎」形式のため前方一致で絞り込む
@@ -110,18 +126,9 @@ def get_shipments(
 
     caches = query.order_by(ShipmentCache.nodayu, ShipmentCache.denno).all()
 
-    # 得意先名マップを作成
-    all_ucods = [c.ucod for c in caches if c.ucod]
-    customer_map: dict = {}
-    if all_ucods:
-        customer_rows = (
-            db.query(CustomerCache)
-            .filter(CustomerCache.ucod.in_(set(all_ucods)))
-            .all()
-        )
-        customer_map = {r.ucod: r.uname or "" for r in customer_rows}
+    customer_names = _customer_name_map(db, (c.ucod for c in caches))
 
-    # ステータスをマージ
+    # アプリ側ステータスをマージ
     status_map = {
         s.denno: s
         for s in db.query(ShipmentStatus).filter(
@@ -141,7 +148,7 @@ def get_shipments(
             "denno": c.denno,
             "tanto": (c.tanto or "").strip(),
             "ucod": c.ucod,
-            "uname": customer_map.get(c.ucod, ""),
+            "uname": customer_names.get(c.ucod, ""),
             "hname": c.hname,
             "synm1": c.synm1,
             "suryo": c.suryo,
@@ -151,7 +158,6 @@ def get_shipments(
             "status": computed_status,
         })
 
-    total = len(results)
     return results[offset: offset + limit]
 
 
@@ -167,12 +173,7 @@ def get_shipment_detail(
 
     status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
     data = _build_response(cache, status_rec)
-    # 得意先名を追加
-    if cache.ucod:
-        cust = db.query(CustomerCache).filter(CustomerCache.ucod == cache.ucod).first()
-        data["uname"] = cust.uname if cust else ""
-    else:
-        data["uname"] = ""
+    data["uname"] = _customer_name_map(db, [cache.ucod]).get(cache.ucod, "")
     return data
 
 
@@ -187,9 +188,8 @@ def update_status(
     if not cache:
         raise HTTPException(status_code=404, detail="荷物が見つかりません")
 
-    valid_statuses = ["未処理", "梱包中", "出荷済", "納品完了"]
-    if body.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"無効なステータスです。有効値: {valid_statuses}")
+    if body.status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"無効なステータスです。有効値: {VALID_STATUSES}")
 
     status_rec = db.query(ShipmentStatus).filter(ShipmentStatus.denno == denno).first()
     if status_rec:

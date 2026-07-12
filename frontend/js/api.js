@@ -109,18 +109,21 @@ const Api = {
     return this._fetch("/sync/logs");
   },
 
-  getLabelUrl(denno) {
-    return `${API_BASE}/shipments/${denno}/label?token=${this.getToken()}`;
+  _fetchPdf(path, errMsg) {
+    return fetch(`${API_BASE}${path}`, {
+      headers: { Authorization: `Bearer ${this.getToken()}` },
+    }).then((res) => {
+      if (!res.ok) throw new Error(errMsg);
+      return res.blob();
+    });
+  },
+
+  getLabel(denno) {
+    return this._fetchPdf(`/shipments/${denno}/label`, "荷札PDF生成に失敗しました");
   },
 
   getMeisai(denno) {
-    const token = this.getToken();
-    return fetch(`${API_BASE}/shipments/${denno}/meisai`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((res) => {
-      if (!res.ok) throw new Error("明細PDF生成に失敗しました");
-      return res.blob();
-    });
+    return this._fetchPdf(`/shipments/${denno}/meisai`, "明細PDF生成に失敗しました");
   },
 
   health() {
